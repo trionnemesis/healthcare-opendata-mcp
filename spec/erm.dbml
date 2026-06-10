@@ -42,7 +42,7 @@ Table datasets {
 
 Table records {
   dataset_id varchar [not null, ref: > datasets.id]
-  natural_key varchar [not null, note: 'upsert 去重鍵']
+  natural_key varchar [not null, note: 'upsert 去重鍵;複合鍵以 "|" 串接欄位值(如 機構代碼|統計年月)']
   payload jsonb [not null, note: '正規化後的資料筆(正準儲存)']
   ingested_at timestamp [not null]
 

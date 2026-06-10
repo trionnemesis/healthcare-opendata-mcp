@@ -52,3 +52,28 @@ class TestNormalize:
         ref = (await adapter.discover())[0]
         batch = adapter.normalize(RawPayload(ref=ref, content=b""))
         assert batch.records == ()
+
+
+class TestCompositeNaturalKey:
+    """9402 保險病床比率:同機構多月份,natural key = 機構代碼|統計年月。"""
+
+    _CSV = (
+        "機構代碼,統計年月,機構名稱,急性比率\n"
+        "1137010024,10408,彰化基督教醫院,74.26\n"
+        "1137010024,10409,彰化基督教醫院,74.31\n"
+    )
+
+    async def test_composite_key_joined_with_pipe(self):
+        adapter = NhiApiAdapter([
+            NhiDatasetSpec(
+                dataset_id="nhi-hospital-bed-ratio",
+                r_id="A21030000I-D02001-015",
+                title="全民健保特約醫院之保險病床比率",
+                natural_key_columns=("機構代碼", "統計年月"),
+            )
+        ])
+        ref = (await adapter.discover())[0]
+        batch = adapter.normalize(RawPayload(ref=ref, content=self._CSV.encode("utf-8")))
+        assert [r.natural_key for r in batch.records] == [
+            "1137010024|10408", "1137010024|10409",
+        ]

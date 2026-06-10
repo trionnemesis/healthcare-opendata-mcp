@@ -12,8 +12,11 @@
 
 | 來源 | 資料集 | 取得形式 |
 |------|--------|---------|
-| 健保署資料開放平台 `info.nhi.gov.tw` | 特約醫事機構(地區/區域醫院) | CSV API,每日更新、免 key |
+| 健保署資料開放平台 `info.nhi.gov.tw` | 特約醫事機構(地區/區域醫院)、保險病床比率 | CSV API,每日更新、免 key |
+| 政府開放資料靜態檔(`vac.gov.tw` / `mohw.gov.tw` / `mnd.gov.tw`) | 全民健保人數、健保平均門診就診率、國軍醫院健保不給付收費標準 | data.gov.tw distribution CSV |
 | 政府電子採購網 `web.pcc.gov.tw` | `pcc-tender-mohw`(衛福部標案,twinkle pcc-tender 欄位相容) | 半月公開 XML |
+
+涵蓋 Twinkle Hub healthcare collection 全部 7 個資料集(data.gov.tw #39282/#39281/#9402/#25842/#176510/#142696 + pcc-tender 衛福部範圍)。
 
 ## 快速開始
 

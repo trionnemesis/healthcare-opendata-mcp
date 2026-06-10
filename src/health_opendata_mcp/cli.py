@@ -6,7 +6,13 @@ import asyncio
 import os
 from pathlib import Path
 
-from health_opendata_mcp.adapters import NhiApiAdapter, NhiDatasetSpec, PccTenderAdapter
+from health_opendata_mcp.adapters import (
+    NhiApiAdapter,
+    NhiDatasetSpec,
+    PccTenderAdapter,
+    StaticCsvAdapter,
+    StaticCsvSpec,
+)
 from health_opendata_mcp.ingestion.pipeline import run_source
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
@@ -29,6 +35,44 @@ NHI_DATASETS = [
         r_id="A21030000I-D21002-005",
         title="健保特約醫事機構-區域醫院",
     ),
+    # data.gov.tw #9402 — 同為 info.nhi.gov.tw 一級 API;同機構多月份 → 複合鍵
+    NhiDatasetSpec(
+        dataset_id="nhi-hospital-bed-ratio",
+        r_id="A21030000I-D02001-015",
+        title="全民健保特約醫院之保險病床比率",
+        natural_key_columns=("機構代碼", "統計年月"),
+    ),
+]
+
+# data.gov.tw distribution 靜態 CSV(2026-06-10 實查 ld+json contentUrl)
+STATIC_DATASETS = [
+    # data.gov.tw #25842(退輔會彙整,月別時間序列)
+    StaticCsvSpec(
+        dataset_id="nhi-insured-population",
+        title="全民健保人數",
+        urls=("https://www.vac.gov.tw/files/b10全民健保人數.csv",),
+        natural_key_columns=("民國年月",),
+    ),
+    # data.gov.tw #176510(縣市別系列 2 檔:97-104 / 105+;年齡別系列不納入)
+    StaticCsvSpec(
+        dataset_id="mohw-outpatient-rate",
+        title="健保平均門診就診率",
+        urls=(
+            "https://www.mohw.gov.tw/dl-98683-66651e5d-fc2b-4e72-969f-d092f2249f62.html",
+            "https://www.mohw.gov.tw/dl-98684-976060f4-6fcb-4029-b6bd-34978a99f822.html",
+        ),
+        natural_key_columns=("年度", "縣市別", "疾病別"),
+        column_renames={"疾病別(第10版)": "疾病別"},
+    ),
+    # data.gov.tw #142696(國防部軍醫局)
+    StaticCsvSpec(
+        dataset_id="mnd-military-hospital-fee",
+        title="國軍醫院健保不給付醫療項目收費標準",
+        urls=(
+            "https://www.mnd.gov.tw/opendata.aspx?f=國軍醫院健保不給付醫療項目收費標準563669",
+        ),
+        natural_key_columns=("Date", "Code"),
+    ),
 ]
 
 
@@ -38,6 +82,7 @@ async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
     await repo.init()
     adapters = [
         NhiApiAdapter(NHI_DATASETS),
+        StaticCsvAdapter(STATIC_DATASETS),
         PccTenderAdapter(award_months=award_months, tender_months=tender_months),
     ]
     exit_code = 0

@@ -1,11 +1,13 @@
-"""NhiApiAdapter — 健保署資料開放平台(info.nhi.gov.tw)CSV API。
+"""StaticCsvAdapter — 政府開放資料靜態 CSV 檔(data.gov.tw distribution)。
 
-一級官方來源:每日更新、免 API key(實測 2026-06)。
-資料集以 NhiDatasetSpec 註冊表驅動 — rId 無命名規則可推,逐一登錄。
+一個 StaticCsvSpec 可含多個 URL(如門診就診率按年度區間分檔),
+discover() 對每個 URL 產出一個 ResourceRef,共用同一 dataset id,
+records 經 upsert 合併至同一物化表。
+column_renames 統一跨檔欄位名(如「疾病別(第10版)」→「疾病別」)。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from health_opendata_mcp.adapters._csv import normalize_csv
@@ -18,36 +20,31 @@ from health_opendata_mcp.contracts import (
     ResourceRef,
 )
 
-_BASE = "https://info.nhi.gov.tw/api/iode0000s01/Dataset"
 _LICENSE = "政府資料開放授權條款 1.0"
 
 
 @dataclass(frozen=True)
-class NhiDatasetSpec:
+class StaticCsvSpec:
     dataset_id: str
-    r_id: str
     title: str
-    natural_key_column: str = "醫事機構代碼"
-    natural_key_columns: tuple[str, ...] | None = None  # 複合鍵;優先於單欄
+    urls: tuple[str, ...]
+    natural_key_columns: tuple[str, ...]
+    column_renames: dict[str, str] = field(default_factory=dict)
     collection: str = "healthcare"
 
-    @property
-    def effective_key_columns(self) -> tuple[str, ...]:
-        return self.natural_key_columns or (self.natural_key_column,)
 
-
-class NhiApiAdapter:
-    source_id = "nhi-opendata"
-    name = "健保署資料開放平台"
-    platform = "info.nhi.gov.tw"
-    access_strategy = AccessStrategy.PLATFORM_API
+class StaticCsvAdapter:
+    source_id = "gov-static"
+    name = "政府開放資料靜態檔案"
+    platform = "data.gov.tw"
+    access_strategy = AccessStrategy.STATIC_FILE
 
     def __init__(
         self,
-        specs: list[NhiDatasetSpec],
+        specs: list[StaticCsvSpec],
         http_get: Callable[[str], Awaitable[bytes]] | None = None,
     ) -> None:
-        self._specs = specs
+        self._specs = {spec.dataset_id: spec for spec in specs}
         self._http_get = http_get or default_http_get
 
     async def discover(self) -> list[ResourceRef]:
@@ -60,15 +57,16 @@ class NhiApiAdapter:
                     collection=spec.collection,
                     license=_LICENSE,
                 ),
-                url=f"{_BASE}?rId={spec.r_id}",
+                url=url,
                 fmt="csv",
-                meta={"natural_key_columns": list(spec.effective_key_columns)},
             )
-            for spec in self._specs
+            for spec in self._specs.values()
+            for url in spec.urls
         ]
 
     async def fetch(self, ref: ResourceRef) -> RawPayload:
         return RawPayload(ref=ref, content=await self._http_get(ref.url))
 
     def normalize(self, raw: RawPayload) -> NormalizedBatch:
-        return normalize_csv(raw, tuple(raw.ref.meta["natural_key_columns"]))
+        spec = self._specs[raw.ref.dataset.id]
+        return normalize_csv(raw, spec.natural_key_columns, spec.column_renames)
