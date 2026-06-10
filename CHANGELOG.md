@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1] - 2026-06-10
+
+### Added
+- `nhi-clinic`(健保特約醫事機構-診所):NHI 一級 API,約 24.5k 筆/每日更新
+  - 實查更正:需求提供之 rId `A21030000I-D32001-001` 查無資料;經 openapi 目錄盤點,正確 resource ID 為 `A21030000I-D21004-009`
+
+### Verified
+- 60 tests 通過;live sync nhi-opendata +125,701 筆,`query_rows("nhi-clinic", limit=10)` 回傳 10 筆,縣市聚合正常
+
 ## [0.2.0] - 2026-06-10
 
 ### Added

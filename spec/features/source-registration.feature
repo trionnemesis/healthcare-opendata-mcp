@@ -33,3 +33,10 @@ Feature: 資料來源註冊與探索
     When 我執行 normalize 與 upsert
     Then natural_key 應為「機構代碼|統計年月」
     And 完全重複列應被去重為單筆
+
+  # 2026-06-10 擴充:健保特約醫事機構-診所(A21030000I-D21004-009,約 24.5k 筆/每日更新)
+  Scenario: 註冊健保診所資料集
+    Given NHI 註冊表登錄「健保特約醫事機構-診所」之 resource ID A21030000I-D21004-009
+    When 我對 nhi-opendata 來源執行 discover
+    Then ResourceRef 清單應包含 dataset id 為 nhi-clinic 的 CSV 資源
+    And 其 natural key 應為 醫事機構代碼

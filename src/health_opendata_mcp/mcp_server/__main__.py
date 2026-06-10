@@ -11,6 +11,8 @@ from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
 def main() -> None:
     db_path = os.environ.get("HCMCP_DB", default_db_path())
+    from pathlib import Path
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     repo = SqliteRepository(db_path)
     asyncio.run(repo.init())
     mcp = build_server(repo)

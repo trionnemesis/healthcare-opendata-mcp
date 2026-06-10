@@ -35,6 +35,12 @@ NHI_DATASETS = [
         r_id="A21030000I-D21002-005",
         title="健保特約醫事機構-區域醫院",
     ),
+    # 實查 2026-06-10 openapi 目錄:D21004(診所)resource = D21004-009,約 24.5k 筆/每日更新
+    NhiDatasetSpec(
+        dataset_id="nhi-clinic",
+        r_id="A21030000I-D21004-009",
+        title="健保特約醫事機構-診所",
+    ),
     # data.gov.tw #9402 — 同為 info.nhi.gov.tw 一級 API;同機構多月份 → 複合鍵
     NhiDatasetSpec(
         dataset_id="nhi-hospital-bed-ratio",

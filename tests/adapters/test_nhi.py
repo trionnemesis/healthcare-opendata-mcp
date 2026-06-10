@@ -77,3 +77,18 @@ class TestCompositeNaturalKey:
         assert [r.natural_key for r in batch.records] == [
             "1137010024|10408", "1137010024|10409",
         ]
+
+
+class TestBuiltinRegistry:
+    """cli 內建註冊表 — 診所資料集(BDD: 註冊健保診所資料集)。"""
+
+    async def test_clinic_dataset_registered_with_verified_rid(self):
+        from health_opendata_mcp.cli import NHI_DATASETS
+        clinic = {s.dataset_id: s for s in NHI_DATASETS}.get("nhi-clinic")
+        assert clinic is not None
+        # 實查 2026-06-10:D32001-001 查無資料,正確 rId 為 D21004-009
+        assert clinic.r_id == "A21030000I-D21004-009"
+        assert clinic.effective_key_columns == ("醫事機構代碼",)
+        refs = await NhiApiAdapter([clinic]).discover()
+        assert refs[0].dataset.id == "nhi-clinic"
+        assert refs[0].fmt == "csv"
