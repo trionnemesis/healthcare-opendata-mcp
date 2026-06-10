@@ -1,0 +1,40 @@
+[project]
+name = "hcmcp"
+version = "0.1.0"
+description = "醫療健保開放資料 MCP — Healthcare OpenData MCP(對齊 Twinkle Hub query_rows,自主資料來源)"
+requires-python = ">=3.11"
+license = "MIT"
+readme = "README.md"
+authors = [{ name = "warden" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "fastmcp>=0.2.0",
+    "httpx>=0.27",
+    "aiosqlite>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+hcmcp = "health_opendata_mcp.mcp_server.__main__:main"
+hcmcp-sync = "health_opendata_mcp.cli:sync_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/health_opendata_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,96 @@
+// Healthcare OpenData MCP — 領域模型
+// Bounded Context: Open Data Ingestion
+// 對應 Notion SDD「03 · DDD 領域模型 (ERM)」
+//
+// 醫療健保開放資料的領域以「來源 → 資料集 → 記錄」與抓取執行軌跡為核心;
+// 標案生命週期狀態機保留在 g0VMCP,本系統以 pcc-tender 資料集形式吸收其產出。
+
+Table data_sources {
+  id varchar [pk]
+  name varchar [not null]
+  platform varchar [not null, note: 'info.nhi.gov.tw / data.gov.tw / mohw-stat / pcc / mnd']
+  access_strategy access_strategy [not null]
+  config jsonb [not null, note: 'url / api_endpoint / auth / selectors']
+  schedule_cron varchar [note: '抓取排程;null=手動']
+  enabled boolean [not null, default: true]
+
+  Note: '''
+  Aggregate Root。事件 SourceRegistered/SourceDisabled。
+  不變量:HEADLESS_BROWSER 必須隔離排程且預設停用
+  '''
+}
+
+Enum access_strategy {
+  PLATFORM_API
+  STATIC_FILE
+  APPLY_API
+  HTTP_SCRAPE
+  HEADLESS_BROWSER
+}
+
+Table datasets {
+  id varchar [pk]
+  source_id varchar [not null, ref: > data_sources.id]
+  title varchar [not null]
+  schema_json jsonb [note: '欄位定義 — 物化表 DDL 的真理來源']
+  collection varchar [note: '主題策展分組,如 healthcare(對齊 Twinkle collection)']
+  license varchar [note: '政府資料開放授權條款 1.0 等']
+  last_fetched_at timestamp
+
+  Note: 'Entity:屬於某 DataSource,有獨立 metadata'
+}
+
+Table records {
+  dataset_id varchar [not null, ref: > datasets.id]
+  natural_key varchar [not null, note: 'upsert 去重鍵']
+  payload jsonb [not null, note: '正規化後的資料筆(正準儲存)']
+  ingested_at timestamp [not null]
+
+  Indexes {
+    (dataset_id, natural_key) [pk]
+    ingested_at
+  }
+  Note: 'Value Object 集合:以 (dataset_id, natural_key) 唯一'
+}
+
+// 物化查詢表(支撐 query_rows):
+// 每個 dataset 依 schema_json 生成實體表 ds_{dataset_id},
+// ETL upsert 交易內同步寫入,供 query_rows 做 SQL 聚合。
+// 表名由 dataset_id 白名單映射,非使用者輸入拼接。
+
+Table ingestion_runs {
+  id integer [pk, increment]
+  source_id varchar [not null, ref: > data_sources.id]
+  started_at timestamp [not null]
+  finished_at timestamp
+  status run_status [not null]
+  fetched_count integer [default: 0]
+  error_detail text
+
+  Note: 'Entity:抓取執行軌跡(可觀測性)'
+}
+
+Enum run_status {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  BLOCKED
+}
+
+// ============================================
+// 領域事件
+// ============================================
+// SourceRegistered    → 納入排程
+// DatasetDiscovered   → 建立 Dataset
+// RecordsIngested     → 更新 last_fetched_at
+// IngestionFailed     → 記錄、觸發退避、告警
+//
+// ============================================
+// 不變量
+// ============================================
+// 1. Record 以 (dataset_id, natural_key) 唯一 — 重複抓取為冪等 upsert
+// 2. HEADLESS_BROWSER 來源必須隔離排程,預設停用
+// 3. IngestionRun status: RUNNING → SUCCEEDED/FAILED/BLOCKED;BLOCKED 可重回 RUNNING
+// 4. query_rows 僅接受唯讀單一 SELECT — 物化表名由 dataset_id 白名單映射,
+//    使用者輸入永不成為 SQL 識別符
+// 5. 物化表與 records 必須一致 — 同一次 ETL upsert 交易同步更新
