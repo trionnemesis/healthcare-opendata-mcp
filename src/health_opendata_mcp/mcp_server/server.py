@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from health_opendata_mcp.mcp_server.service import QueryService
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
@@ -18,6 +20,11 @@ title/agency/job_number/companies/award_price 等;金額用 CAST(award_price AS 
 def build_server(repo: SqliteRepository) -> FastMCP:
     mcp = FastMCP("hcmcp", instructions=_INSTRUCTIONS)
     service = QueryService(repo)
+
+    @mcp.custom_route("/healthz", methods=["GET"])
+    async def healthz(request: Request) -> JSONResponse:
+        # K8s readiness/liveness probe;啟動護欄已保證 DB 非空,這裡只確認 process 活著
+        return JSONResponse({"status": "ok"})
 
     @mcp.tool()
     async def list_sources() -> list[dict]:

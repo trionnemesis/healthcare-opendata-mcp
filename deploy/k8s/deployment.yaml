@@ -1,0 +1,70 @@
+# hcmcp MCP server — 唯讀 SQLite 以 GCS artifact 模式落地:
+# initContainer 自 GCS 拉 hcmcp.db 至 emptyDir,主容器唯讀查詢。
+# DB 不可變 → replica 可自由水平擴展,無 SQLite 鎖問題。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hcmcp
+  labels:
+    app: hcmcp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hcmcp
+  template:
+    metadata:
+      labels:
+        app: hcmcp
+    spec:
+      # GCS 存取走 Workload Identity:此 KSA 需綁定有 bucket 讀取權的 GSA
+      serviceAccountName: hcmcp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      initContainers:
+        - name: fetch-db
+          image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+          command: ["gcloud", "storage", "cp", "gs://HCMCP_BUCKET/hcmcp.db", "/data/hcmcp.db"]
+          volumeMounts:
+            - name: db
+              mountPath: /data
+      containers:
+        - name: hcmcp
+          image: REGISTRY/hcmcp:latest  # 替換為公司 Artifact Registry 路徑
+          env:
+            - name: HCMCP_TRANSPORT
+              value: "http"
+            - name: HCMCP_DB
+              value: /data/hcmcp.db
+            - name: HCMCP_PORT
+              value: "8000"
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: db
+              mountPath: /data
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: db
+          emptyDir:
+            sizeLimit: 1Gi

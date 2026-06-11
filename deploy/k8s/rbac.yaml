@@ -1,0 +1,38 @@
+# ServiceAccounts:
+#   hcmcp       — server pods,經 Workload Identity 綁 GSA(GCS 讀)
+#   hcmcp-sync  — CronJob,經 Workload Identity 綁 GSA(GCS 寫)+ 滾動重啟 RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hcmcp
+  # annotations:
+  #   iam.gke.io/gcp-service-account: hcmcp-reader@PROJECT.iam.gserviceaccount.com
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hcmcp-sync
+  # annotations:
+  #   iam.gke.io/gcp-service-account: hcmcp-writer@PROJECT.iam.gserviceaccount.com
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hcmcp-rollout
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["hcmcp"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hcmcp-sync-rollout
+subjects:
+  - kind: ServiceAccount
+    name: hcmcp-sync
+roleRef:
+  kind: Role
+  name: hcmcp-rollout
+  apiGroup: rbac.authorization.k8s.io

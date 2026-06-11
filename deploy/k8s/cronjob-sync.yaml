@@ -1,0 +1,47 @@
+# 每日 ETL:initContainer 跑 hcmcp-sync 產出 DB → 主容器上傳 GCS
+# → 滾動重啟 Deployment 讓 pods 拉新檔(kubectl 需 RBAC,見 deploy/README.md)。
+# initContainer/容器序列化執行,確保「sync 完成才上傳、上傳完成才重啟」。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hcmcp-sync
+spec:
+  schedule: "30 2 * * *"  # 每日 02:30(健保署 CSV 每日更新;PCC XML 半月更新)
+  timeZone: "Asia/Taipei"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3600
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: hcmcp-sync  # 需 GCS 寫入權 + deployments/hcmcp 的 patch RBAC
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+          initContainers:
+            - name: sync
+              image: REGISTRY/hcmcp:latest
+              command: ["hcmcp-sync"]
+              env:
+                - name: HCMCP_DB
+                  value: /data/hcmcp.db
+              volumeMounts:
+                - name: db
+                  mountPath: /data
+            - name: upload
+              image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+              command: ["gcloud", "storage", "cp", "/data/hcmcp.db", "gs://HCMCP_BUCKET/hcmcp.db"]
+              volumeMounts:
+                - name: db
+                  mountPath: /data
+          containers:
+            - name: rollout
+              image: bitnami/kubectl:latest
+              command: ["kubectl", "rollout", "restart", "deployment/hcmcp"]
+          volumes:
+            - name: db
+              emptyDir:
+                sizeLimit: 1Gi

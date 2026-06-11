@@ -32,11 +32,17 @@ python3.11 -m venv .venv && .venv/bin/pip install -e .
 claude mcp add hcmcp -- /path/to/.venv/bin/hcmcp
 ```
 
-SSE 模式(團隊共用 / 容器部署):
+HTTP 模式(團隊共用 / 容器部署,MCP streamable HTTP):
 
 ```bash
-HCMCP_TRANSPORT=sse HCMCP_PORT=8000 hcmcp
+HCMCP_TRANSPORT=http HCMCP_PORT=8000 hcmcp
+# 連線:claude mcp add --transport http hcmcp http://<host>:8000/mcp
+# probe:GET /healthz
 ```
+
+(`HCMCP_TRANSPORT=sse` 保留給既有部署相容;MCP spec 已 deprecate SSE,新部署用 http)
+
+GKE 部署(Dockerfile + K8s manifests):見 [deploy/README.md](deploy/README.md)。
 
 ## MCP 工具
 

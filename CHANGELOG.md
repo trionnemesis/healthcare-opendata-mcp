@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0] - 2026-06-11
+
+### Added
+- GKE 部署支援:
+  - `HCMCP_TRANSPORT=http`(MCP streamable HTTP,stateless 可多 replica;SSE 留作既有部署相容,spec 已 deprecated)
+  - `/healthz` custom route(K8s readiness/liveness probe)
+  - `Dockerfile`(單 image 雙 entrypoint `hcmcp`/`hcmcp-sync`,non-root uid 10001)
+  - `deploy/k8s/`:Deployment(GCS artifact 模式,initContainer 拉 DB 至 emptyDir)+ CronJob(每日 sync → 上傳 GCS → rollout restart)+ Service + RBAC/ServiceAccount(Workload Identity)
+  - `deploy/README.md`:架構圖、前置作業、bootstrap 與驗證步驟
+- `resolve_transport()` 純函式抽取(transport/host/port 解析,便於測試)
+
+### Verified
+- 67 tests 通過(新增 5 tests:transport 解析 4 + healthz probe 1)
+- 容器 E2E:docker build → 掛載 176MB DB 啟動 → `/healthz` 200 → MCP `initialize` over streamable HTTP 回應正常
+
 ## [0.2.2] - 2026-06-10
 
 ### Added

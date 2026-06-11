@@ -1,9 +1,11 @@
-"""MCP server 進入點 — stdio(預設)/ SSE 雙 transport。"""
+"""MCP server 進入點 — stdio(預設)/ http(streamable,GKE)/ sse(相容)三 transport。"""
 from __future__ import annotations
 
 import asyncio
 import os
 import sys
+from collections.abc import Mapping
+from pathlib import Path
 
 from health_opendata_mcp.cli import default_db_path
 from health_opendata_mcp.mcp_server.server import build_server
@@ -20,9 +22,23 @@ async def empty_db_error(repo: SqliteRepository, db_path: str) -> str | None:
     )
 
 
+def resolve_transport(env: Mapping[str, str]) -> tuple[str, dict]:
+    """由環境變數決定 transport 與 run kwargs(純函式,便於測試)。
+
+    sse 保留為既有部署相容;新網路部署(GKE)一律用 http(streamable,
+    stateless 可多 replica 水平擴展)。
+    """
+    transport = env.get("HCMCP_TRANSPORT", "stdio")
+    if transport in ("http", "sse"):
+        return transport, {
+            "host": env.get("HCMCP_HOST", "0.0.0.0"),
+            "port": int(env.get("HCMCP_PORT", "8000")),
+        }
+    return "stdio", {}
+
+
 def main() -> None:
     db_path = os.environ.get("HCMCP_DB", default_db_path())
-    from pathlib import Path
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     repo = SqliteRepository(db_path)
     asyncio.run(repo.init())
@@ -32,15 +48,8 @@ def main() -> None:
         raise SystemExit(1)
     mcp = build_server(repo)
 
-    transport = os.environ.get("HCMCP_TRANSPORT", "stdio")
-    if transport == "sse":
-        mcp.run(
-            transport="sse",
-            host=os.environ.get("HCMCP_HOST", "0.0.0.0"),
-            port=int(os.environ.get("HCMCP_PORT", "8000")),
-        )
-    else:
-        mcp.run()
+    transport, kwargs = resolve_transport(os.environ)
+    mcp.run(transport=transport, **kwargs)
 
 
 if __name__ == "__main__":

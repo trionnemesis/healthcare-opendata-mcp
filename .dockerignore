@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+*.pyc
+hcmcp.db
+tests/
+spec/
+deploy/
+CHANGELOG.md
