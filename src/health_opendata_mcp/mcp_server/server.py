@@ -9,11 +9,12 @@ from health_opendata_mcp.mcp_server.service import QueryService
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
 _INSTRUCTIONS = """\
-醫療健保開放資料 MCP — 健保署開放資料 × 衛福部標案(twinkle pcc-tender 相容)。
+醫療健保開放資料 MCP — 健保署開放資料 × 政府採購標案(twinkle pcc-tender 相容)。
 查詢入口:list_datasets 看可用資料集 → get_dataset(sample_rows=5) 看欄位與樣本
 → query_rows 做 SQL 式篩選/聚合(SELECT-only)。
-標案資料集 pcc-tender-mohw 欄位對齊 twinkle pcc-tender(date/announcement_type/
-title/agency/job_number/companies/award_price 等;金額用 CAST(award_price AS INTEGER))。
+標案資料集:pcc-tender(全機關)、pcc-tender-mohw(衛福部子集),欄位對齊
+twinkle pcc-tender(date/announcement_type/title/agency/job_number/companies/
+award_price 等;金額用 CAST(award_price AS INTEGER);SQLite 用 LIKE,無 ILIKE)。
 """
 
 
@@ -50,7 +51,7 @@ def build_server(repo: SqliteRepository) -> FastMCP:
         order_by: str | None = None,
         limit: int = 50,
     ) -> dict:
-        """SQL 式查詢單一資料集(SELECT-only,limit 上限 200)。
+        """SQL 式查詢單一資料集(SELECT-only,limit 上限 400)。
 
         columns 可含聚合,如 ["agency", "SUM(CAST(award_price AS INTEGER)) AS total"];
         where 為 SQL WHERE 片段,如 "announcement_type='決標公告' AND date >= '2025-01-01'"。
@@ -68,7 +69,7 @@ def build_server(repo: SqliteRepository) -> FastMCP:
     async def search_records(
         keyword: str, dataset_id: str | None = None, limit: int = 20
     ) -> list[dict]:
-        """跨資料集關鍵字搜尋(payload 全文 LIKE),回傳標註資料集的記錄(limit 上限 200)。"""
+        """跨資料集關鍵字搜尋(payload 全文 LIKE),回傳標註資料集的記錄(limit 上限 400)。"""
         return await service.search_records(keyword, dataset_id, limit)
 
     @mcp.tool()

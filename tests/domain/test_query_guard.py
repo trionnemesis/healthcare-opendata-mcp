@@ -51,6 +51,11 @@ class TestNormalizeLimit:
     def test_limit_floor_at_one(self):
         assert normalize_limit(-1) == 1
 
+    def test_max_limit_matches_board_requirement(self):
+        # 看板 pcc-it-tender-board 單次查詢 limit=400(twinkle 原行為);
+        # spec/features/query-rows.feature「limit 硬上限」同步此值
+        assert MAX_LIMIT == 400
+
 
 class TestInjectionRejection:
     def test_reject_multi_statement_semicolon(self):

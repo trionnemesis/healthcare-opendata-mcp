@@ -1,6 +1,6 @@
 # Healthcare OpenData MCP (hcmcp)
 
-> 醫療健保開放資料 MCP — 健保署開放資料 × 衛福部標案,對齊 Twinkle Hub `query_rows`,完全自主資料來源
+> 醫療健保開放資料 MCP — 健保署開放資料 × 政府採購標案,對齊 Twinkle Hub `query_rows`,完全自主資料來源
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -14,7 +14,7 @@
 |------|--------|---------|
 | 健保署資料開放平台 `info.nhi.gov.tw` | 特約醫事機構(地區/區域醫院、診所)、保險病床比率 | CSV API,每日更新、免 key |
 | 政府開放資料靜態檔(`vac.gov.tw` / `mohw.gov.tw` / `mnd.gov.tw`) | 全民健保人數、健保平均門診就診率、國軍醫院健保不給付收費標準 | data.gov.tw distribution CSV |
-| 政府電子採購網 `web.pcc.gov.tw` | `pcc-tender-mohw`(衛福部標案,twinkle pcc-tender 欄位相容) | 半月公開 XML |
+| 政府電子採購網 `web.pcc.gov.tw` | `pcc-tender`(全機關)+ `pcc-tender-mohw`(衛福部子集),twinkle pcc-tender 欄位相容 | 半月公開 XML |
 
 涵蓋 Twinkle Hub healthcare collection 全部 7 個資料集(data.gov.tw #39282/#39281/#9402/#25842/#176510/#142696 + pcc-tender 衛福部範圍)。
 
@@ -25,7 +25,7 @@
 git clone <repo-url> && cd healthcare-opendata-mcp
 python3.11 -m venv .venv && .venv/bin/pip install -e .
 
-# 同步資料(預設 ~/.hcmcp/hcmcp.db;決標 12 月、招標 3 月)
+# 同步資料(預設 ~/.hcmcp/hcmcp.db;決標 12 月、招標 12 月)
 .venv/bin/hcmcp-sync
 
 # 加入 Claude Code
@@ -71,7 +71,7 @@ query_rows(
 
 `query_rows` 接受原始 SQL 片段,以雙層防禦保護:
 
-1. **語法層**(`query_guard`):僅單一 SELECT;拒絕 `;` 多語句、註解、PRAGMA/ATTACH/DML/DDL;limit 硬上限 200
+1. **語法層**(`query_guard`):僅單一 SELECT;拒絕 `;` 多語句、註解、PRAGMA/ATTACH/DML/DDL;limit 硬上限 400
 2. **執行層**(`query_executor`):`mode=ro` 唯讀連線 + sqlite authorizer 白名單(僅允許讀單一物化表,跨表子查詢一律拒絕)+ VM 步數上限
 
 ## 架構
@@ -101,7 +101,7 @@ spec/
 
 ```bash
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest        # 52 tests
+.venv/bin/python -m pytest        # 75 tests
 ```
 
 完整 SDD 規格(評估矩陣 / BDD / DDD / 架構 / Twinkle 功能對齊)維護於 Notion「醫療健保開放資料 MCP」條目。

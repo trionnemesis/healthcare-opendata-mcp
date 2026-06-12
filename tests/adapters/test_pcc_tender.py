@@ -112,6 +112,32 @@ class TestNormalize:
         assert batch.records == ()
 
 
+class TestFullScopeDataset:
+    """agency_prefix=""(全機關)— Cowork IT 標案看板的 twinkle-hub 替代資料源。"""
+
+    def _full(self) -> PccTenderAdapter:
+        return _adapter(
+            agency_prefix="", dataset_id="pcc-tender", collection="procurement"
+        )
+
+    def test_empty_prefix_keeps_all_agencies(self):
+        ref = _ref(self._full(), "award")
+        batch = self._full().normalize(
+            RawPayload(ref=ref, content=_AWARD_XML.encode("utf-8"))
+        )
+        agencies = {r.payload["agency"] for r in batch.records}
+        assert agencies == {"衛生福利部疾病管制署", "交通部公路局"}
+
+    def test_dataset_meta_reflects_full_scope(self):
+        ref = _ref(self._full(), "tender")
+        batch = self._full().normalize(
+            RawPayload(ref=ref, content=_TENDER_XML.encode("utf-8"))
+        )
+        assert batch.dataset.id == "pcc-tender"
+        assert batch.dataset.collection == "procurement"
+        assert "全機關" in batch.dataset.title
+
+
 def test_rejects_xml_doctype_payload():
     from health_opendata_mcp.adapters import _pcc_opendata as pcc
 

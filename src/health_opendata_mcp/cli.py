@@ -90,6 +90,14 @@ async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
         NhiApiAdapter(NHI_DATASETS),
         StaticCsvAdapter(STATIC_DATASETS),
         PccTenderAdapter(award_months=award_months, tender_months=tender_months),
+        # 全機關 pcc-tender — Cowork IT 標案看板/半月排程的 twinkle-hub 替代資料源
+        PccTenderAdapter(
+            award_months=award_months,
+            tender_months=tender_months,
+            agency_prefix="",
+            dataset_id="pcc-tender",
+            collection="procurement",
+        ),
     ]
     exit_code = 0
     for adapter in adapters:
@@ -110,6 +118,7 @@ def sync_main() -> None:
     parser = argparse.ArgumentParser(description="同步醫療健保開放資料至本地 DB")
     parser.add_argument("--db", default=default_db_path(), help="SQLite DB 路徑")
     parser.add_argument("--award-months", type=int, default=12, help="決標回溯月數")
-    parser.add_argument("--tender-months", type=int, default=3, help="招標回溯月數")
+    # 12 = 看板「近 1 年」招標視圖的累積上限(PCC 站上實際可回溯約 6 個月)
+    parser.add_argument("--tender-months", type=int, default=12, help="招標回溯月數")
     args = parser.parse_args()
     raise SystemExit(asyncio.run(_sync(args.db, args.award_months, args.tender_months)))

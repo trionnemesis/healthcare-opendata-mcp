@@ -31,5 +31,5 @@ Feature: SQL 式聚合查詢 query_rows(對齊 Twinkle Hub)
 
   Scenario: limit 硬上限
     When 我以 limit=10000 呼叫 query_rows
-    Then 實際回傳列數不應超過 200
+    Then 實際回傳列數不應超過 400
     And 回應應標註結果已截斷

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import re
 
-MAX_LIMIT = 200
+# 400 = pcc-it-tender-board 看板單次查詢量(twinkle-hub 原行為);仍有 executor
+# progress handler 兜底,放寬不影響資源護欄
+MAX_LIMIT = 400
 DEFAULT_LIMIT = 50
 
 

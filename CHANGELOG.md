@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0] - 2026-06-13
+
+### Added
+- `pcc-tender`(全機關政府採購標案):`PccTenderAdapter` 第二實例(`agency_prefix=""`、`collection="procurement"`)— twinkle-hub 故障停用後,Cowork「政府採購 IT 標案看板」與半月排程 `pcc-it-tender-biweekly` 的替代資料源(dataset_id 與欄位與 twinkle 完全相容,查詢端僅 `ILIKE` 需改 `LIKE`)
+- `PccTenderAdapter` 新增 `collection` 參數;`agency_prefix=""` 表全機關不過濾
+- `scripts/export_board_data.py`:匯出 `pcc-tender` 全量為看板 `data.js` 快照 — Cowork artifact 的 `callMcpTool` 僅能呼叫 claude.ai remote connector(無法呼叫本機 stdio MCP),看板改讀快照,由半月排程在 sync 後重新匯出
+
+### Changed
+- `query_rows` / `search_records` limit 硬上限 200 → 400(對齊看板單次查詢量 400;executor 唯讀連線 + authorizer 白名單 + VM 步數護欄不變)
+- `hcmcp-sync --tender-months` 預設 3 → 12(支撐看板「近 1 年」招標視圖;PCC 站上實際可回溯約 6 個月,歷史隨每次同步累積)
+
+### Verified
+- 75 tests 通過(新增 3:全機關不過濾、dataset meta、limit 400 釘規格)
+- live sync(2026-06-13):pcc-opendata +12,270 筆(`pcc-tender` 全機關,招標 6,614/決標 4,374,回溯至 2025-06)+177 筆(mohw,招標回溯 12 月)
+- 看板實際 WHERE(IT 關鍵字 + 近 90 天)經 QueryService 回 274 筆 / limit=400 未截斷(舊上限 200 會截斷此查詢)
+
 ## [0.3.0] - 2026-06-11
 
 ### Added

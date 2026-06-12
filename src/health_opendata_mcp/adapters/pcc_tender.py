@@ -1,7 +1,8 @@
-"""PccTenderAdapter — PCC 半月 XML → pcc-tender-mohw 資料集。
+"""PccTenderAdapter — PCC 半月 XML → pcc-tender / pcc-tender-mohw 資料集。
 
-對齊 twinkle-hub pcc-tender 欄位(英文欄名,既有查詢模式可直接沿用),
-範圍縮限機關名稱以「衛生福利部」開頭(含轄下機關與部立醫院)。
+對齊 twinkle-hub pcc-tender 欄位(英文欄名,既有查詢模式可直接沿用)。
+agency_prefix 縮限機關範圍(預設「衛生福利部」含轄下機關與部立醫院);
+傳空字串=全機關,供 twinkle-hub 停用後的看板/排程沿用原 pcc-tender 查詢。
 解析純函式 vendored 自 g0VMCP(_pcc_opendata.py),兩專案零耦合。
 """
 from __future__ import annotations
@@ -75,6 +76,7 @@ class PccTenderAdapter:
         tender_months: int = 3,
         agency_prefix: str = "衛生福利部",
         dataset_id: str = "pcc-tender-mohw",
+        collection: str = "healthcare",
         today: date | None = None,
         http_get: Callable[[str], Awaitable[bytes]] | None = None,
     ) -> None:
@@ -83,12 +85,13 @@ class PccTenderAdapter:
         self._agency_prefix = agency_prefix
         self._today = today or date.today()
         self._http_get = http_get or default_http_get
+        scope = f"{agency_prefix}範圍" if agency_prefix else "全機關"
         self._dataset = DatasetMeta(
             id=dataset_id,
             source_id=self.source_id,
-            title=f"政府採購標案({agency_prefix}範圍,twinkle pcc-tender 相容)",
+            title=f"政府採購標案({scope},twinkle pcc-tender 相容)",
             columns=PCC_TENDER_COLUMNS,
-            collection="healthcare",
+            collection=collection,
             license="政府資料開放授權條款 1.0",
         )
 
