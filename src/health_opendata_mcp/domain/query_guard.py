@@ -15,6 +15,11 @@ MAX_LIMIT = 200
 DEFAULT_LIMIT = 50
 
 
+def normalize_limit(limit: int, *, max_limit: int = MAX_LIMIT) -> int:
+    """將工具 limit 正規化為 1..max_limit,避免負數/過大值造成資源耗用。"""
+    return max(1, min(int(limit), max_limit))
+
+
 class QueryValidationError(ValueError):
     """使用者查詢參數含禁用語法。"""
 
@@ -57,6 +62,6 @@ def build_select(
         parts.append(f"GROUP BY {joined}")
     if order_by:
         parts.append(f"ORDER BY {_validate(order_by, what='order_by')}")
-    effective = max(1, min(int(limit), MAX_LIMIT))
+    effective = normalize_limit(limit)
     parts.append(f"LIMIT {effective + 1}")
     return " ".join(parts), effective

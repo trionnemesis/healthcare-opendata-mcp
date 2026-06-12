@@ -68,7 +68,7 @@ def build_server(repo: SqliteRepository) -> FastMCP:
     async def search_records(
         keyword: str, dataset_id: str | None = None, limit: int = 20
     ) -> list[dict]:
-        """跨資料集關鍵字搜尋(payload 全文 LIKE),回傳標註資料集的記錄。"""
+        """跨資料集關鍵字搜尋(payload 全文 LIKE),回傳標註資料集的記錄(limit 上限 200)。"""
         return await service.search_records(keyword, dataset_id, limit)
 
     @mcp.tool()

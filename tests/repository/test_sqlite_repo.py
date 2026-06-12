@@ -119,3 +119,19 @@ class TestSourcesAndSearch:
         assert len(hits) == 1
         assert hits[0]["dataset_id"] == "demo-ds"
         assert "民生" in hits[0]["payload"]["name"]
+
+    async def test_search_records_limit_is_capped_and_floored(self, repo):
+        await repo.upsert_batch(
+            _demo_batch(
+                [{"name": f"民生{i}", "city": "高雄", "amount": i} for i in range(3)]
+            )
+        )
+        assert len(await repo.search_records("民生", limit=-1)) == 1
+        assert len(await repo.search_records("民生", limit=10000)) == 3
+
+    async def test_search_records_rejects_blank_keyword(self, repo):
+        await repo.upsert_batch(
+            _demo_batch([{"name": "民生", "city": "高雄", "amount": 1}])
+        )
+        with pytest.raises(ValueError):
+            await repo.search_records("  ")

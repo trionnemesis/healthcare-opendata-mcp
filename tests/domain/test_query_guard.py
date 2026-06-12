@@ -5,6 +5,7 @@ from health_opendata_mcp.domain.query_guard import (
     MAX_LIMIT,
     QueryValidationError,
     build_select,
+    normalize_limit,
 )
 
 
@@ -41,6 +42,14 @@ class TestBuildSelect:
         # executor 以 eff+1 偵測截斷
         sql, eff = build_select("ds_demo", limit=10)
         assert sql.endswith(f"LIMIT {eff + 1}")
+
+
+class TestNormalizeLimit:
+    def test_limit_capped_at_max(self):
+        assert normalize_limit(10000) == MAX_LIMIT
+
+    def test_limit_floor_at_one(self):
+        assert normalize_limit(-1) == 1
 
 
 class TestInjectionRejection:

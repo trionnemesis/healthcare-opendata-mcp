@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 _DOWNLOAD_BASE = "https://web.pcc.gov.tw/tps/tp/OpenData/downloadFile"
+_MAX_XML_CHARS = 20_000_000
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,16 @@ class AwardRow:
     winners: tuple[str, ...]
 
 
+def _safe_fromstring(xml: str) -> ET.Element:
+    """解析官方 XML 前套用基本資源護欄,拒絕 DTD/ENTITY 與過大輸入。"""
+    if len(xml) > _MAX_XML_CHARS:
+        raise ValueError("PCC XML 超過安全解析大小上限")
+    prefix = xml[:1024].lower()
+    if "<!doctype" in prefix or "<!entity" in prefix:
+        raise ValueError("PCC XML 含 DTD/ENTITY,已拒絕解析")
+    return ET.fromstring(xml)
+
+
 def _text(node: ET.Element, tag: str) -> str:
     """缺欄位 / 空內容一律回空字串(容錯)。"""
     child = node.find(tag)
@@ -52,7 +63,7 @@ def _text(node: ET.Element, tag: str) -> str:
 
 def parse_tender_xml(xml: str) -> list[OpenDataRow]:
     """解析半月招標 XML。缺欄位以空字串填充。"""
-    root = ET.fromstring(xml)
+    root = _safe_fromstring(xml)
     rows: list[OpenDataRow] = []
     for t in root.iter("TENDER"):
         rows.append(
@@ -70,7 +81,7 @@ def parse_tender_xml(xml: str) -> list[OpenDataRow]:
 
 def parse_award_xml(xml: str) -> list[AwardRow]:
     """解析半月決標 XML。得標廠商在巢狀 <BIDDER_LIST>/<BIDDER_SUPP_NAME>。"""
-    root = ET.fromstring(xml)
+    root = _safe_fromstring(xml)
     rows: list[AwardRow] = []
     for t in root.iter("TENDER"):
         bl = t.find("BIDDER_LIST")

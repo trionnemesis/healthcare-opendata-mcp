@@ -1,6 +1,8 @@
 """PccTenderAdapter — PCC 半月 XML → pcc-tender-mohw(BDD: ingestion.feature)。"""
 from datetime import date
 
+import pytest
+
 from health_opendata_mcp.adapters.pcc_tender import PccTenderAdapter
 from health_opendata_mcp.contracts import AccessStrategy, RawPayload
 
@@ -108,3 +110,12 @@ class TestNormalize:
         ref = _ref(adapter, "award")
         batch = adapter.normalize(RawPayload(ref=ref, content=b""))
         assert batch.records == ()
+
+
+def test_rejects_xml_doctype_payload():
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    xml = """<!DOCTYPE x [<!ENTITY boom "boom">]><TENDER_LIST />"""
+
+    with pytest.raises(ValueError):
+        pcc.parse_tender_xml(xml)

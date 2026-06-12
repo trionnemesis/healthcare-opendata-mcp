@@ -25,7 +25,11 @@ from health_opendata_mcp.contracts import (
     RunStatus,
     SourceInfo,
 )
-from health_opendata_mcp.domain.query_guard import DEFAULT_LIMIT, build_select
+from health_opendata_mcp.domain.query_guard import (
+    DEFAULT_LIMIT,
+    build_select,
+    normalize_limit,
+)
 from health_opendata_mcp.repository.query_executor import execute_readonly
 from health_opendata_mcp.repository.schema import BASE_SCHEMA
 
@@ -214,6 +218,10 @@ class SqliteRepository:
     async def search_records(
         self, keyword: str, dataset_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
+        keyword = keyword.strip()
+        if not keyword:
+            raise ValueError("keyword 不可為空")
+        effective_limit = normalize_limit(limit)
         sql = (
             "SELECT dataset_id, natural_key, payload FROM records"
             " WHERE payload LIKE ?"
@@ -223,7 +231,7 @@ class SqliteRepository:
             sql += " AND dataset_id = ?"
             params.append(dataset_id)
         sql += " LIMIT ?"
-        params.append(int(limit))
+        params.append(effective_limit)
         async with aiosqlite.connect(self._db_path) as db:
             cur = await db.execute(sql, params)
             rows = await cur.fetchall()
