@@ -49,6 +49,64 @@ async def service(tmp_path):
     return QueryService(repo)
 
 
+class _FakeEnricher:
+    def __init__(self, detail=None, exc=None):
+        self._detail = detail
+        self._exc = exc
+
+    async def fetch_detail(self, job_number):
+        if self._exc:
+            raise self._exc
+        return self._detail
+
+
+class TestGetTenderDetail:
+    async def test_returns_enriched_fields(self, tmp_path):
+        from health_opendata_mcp.adapters._pcc_detail import DetailFields
+
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        svc = QueryService(
+            repo,
+            _FakeEnricher(
+                DetailFields(
+                    bid_deadline="2026-06-20 17:00",
+                    open_date="2026-06-21 10:00",
+                    budget="5000000",
+                    title="某資訊系統案",
+                    agency="衛生福利部",
+                )
+            ),
+        )
+        out = await svc.get_tender_detail("ABC123")
+        assert out["bid_deadline"] == "2026-06-20 17:00"
+        assert out["open_date"] == "2026-06-21 10:00"
+        assert out["budget"] == "5000000"
+        assert out["job_number"] == "ABC123"
+
+    async def test_blocked_maps_to_valueerror(self, tmp_path):
+        from health_opendata_mcp.contracts import BlockedError
+
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        svc = QueryService(repo, _FakeEnricher(exc=BlockedError("429")))
+        with pytest.raises(ValueError, match="稍後再試"):
+            await svc.get_tender_detail("X")
+
+    async def test_not_found_maps_to_valueerror(self, tmp_path):
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        svc = QueryService(repo, _FakeEnricher(detail=None))
+        with pytest.raises(ValueError, match="查無此案"):
+            await svc.get_tender_detail("X")
+
+    async def test_empty_job_number_rejected(self, tmp_path):
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        with pytest.raises(ValueError):
+            await QueryService(repo, _FakeEnricher()).get_tender_detail("  ")
+
+
 class TestCatalog:
     async def test_list_sources(self, service):
         sources = await service.list_sources()

@@ -5,6 +5,7 @@ from fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from health_opendata_mcp.adapters.pcc_detail import PccDetailEnricher
 from health_opendata_mcp.mcp_server.service import QueryService
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
@@ -15,12 +16,16 @@ _INSTRUCTIONS = """\
 標案資料集:pcc-tender(全機關)、pcc-tender-mohw(衛福部子集),欄位對齊
 twinkle pcc-tender(date/announcement_type/title/agency/job_number/companies/
 award_price 等;金額用 CAST(award_price AS INTEGER);SQLite 用 LIKE,無 ILIKE)。
+招標案的截標/開標/預算半月 open data 沒有,需 get_tender_detail(job_number)
+即時抓明細頁補(開標時間=實際投標 deadline)。
 """
 
 
-def build_server(repo: SqliteRepository) -> FastMCP:
+def build_server(
+    repo: SqliteRepository, enricher: PccDetailEnricher | None = None
+) -> FastMCP:
     mcp = FastMCP("hcmcp", instructions=_INSTRUCTIONS)
-    service = QueryService(repo)
+    service = QueryService(repo, enricher)
 
     @mcp.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> JSONResponse:
@@ -76,5 +81,16 @@ def build_server(repo: SqliteRepository) -> FastMCP:
     async def get_record(dataset_id: str, natural_key: str) -> dict:
         """以 (dataset_id, natural_key) 取單筆完整資料。"""
         return await service.get_record(dataset_id, natural_key)
+
+    @mcp.tool()
+    async def get_tender_detail(job_number: str) -> dict:
+        """即時抓政府電子採購網標案明細,補半月 open data 缺的加值欄位。
+
+        以標案案號(job_number,即 pcc-tender 的 job_number)查 web.pcc 明細頁,
+        回 bid_deadline(截止投標)、open_date(開標時間)、budget(預算金額)、
+        title、agency、procurement_attr。招標階段評估投標時用;PCC 維護/限流
+        時會回錯誤,稍後再試。
+        """
+        return await service.get_tender_detail(job_number)
 
     return mcp

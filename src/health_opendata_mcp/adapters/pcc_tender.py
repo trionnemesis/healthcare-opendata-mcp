@@ -37,6 +37,10 @@ PCC_TENDER_COLUMNS = tuple(
         "award_way",
         "award_price",
         "notice_date",
+        # 明細頁加值欄位(初始空,由 enrich_bid_deadline 補;招標階段最關鍵)
+        "bid_deadline",
+        "open_date",
+        "budget",
     )
 )
 
@@ -154,6 +158,9 @@ class PccTenderAdapter:
             "award_way": row.award_way,
             "award_price": row.award_price,
             "notice_date": _iso(row.notice_date),
+            "bid_deadline": "",
+            "open_date": "",
+            "budget": "",
         }
         return Record(
             dataset_id=self._dataset.id,
@@ -175,6 +182,9 @@ class PccTenderAdapter:
             "award_way": "",
             "award_price": "",
             "notice_date": "",
+            "bid_deadline": "",
+            "open_date": "",
+            "budget": "",
         }
         return Record(
             dataset_id=self._dataset.id,

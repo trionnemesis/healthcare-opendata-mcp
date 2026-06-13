@@ -21,6 +21,9 @@ COLUMNS = (
     "award_price",
     "companies",
     "job_number",
+    "bid_deadline",  # 截止投標(enrich;招標案才有意義)
+    "open_date",  # 開標時間 = 實際投標 deadline
+    "budget",  # 預算金額
 )
 
 

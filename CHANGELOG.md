@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0] - 2026-06-13
+
+### Added
+- 招標案截標/開標/預算 enrich(看板「截標/開標」欄需求):
+  - `pcc-tender` / `pcc-tender-mohw` 新增欄位 `bid_deadline`(截止投標)、`open_date`(開標時間)、`budget`(預算金額)— 半月 open data 招標檔沒有這些,只能逐案爬 web.pcc 明細頁
+  - `adapters/_pcc_detail.py`:明細頁解析純函式(stdlib html.parser,不引入 selectolax),擷取截標/開標/預算;th/td 與 td/td 雙模型、忽略 script/style 內文字。fixture 取自 g0VMCP(MIT)實戰頁驗證
+  - `adapters/pcc_detail.py`:`PccDetailEnricher`(DI HTTP client)— POST readTenderBasic 搜尋 → readBulletion 明細頁 → 解析;403/429 raise BlockedError
+  - MCP tool `get_tender_detail(job_number)`:即時抓單案明細(截標/開標/預算/採購屬性)
+  - `scripts/enrich_bid_deadline.py`:對近期、未決標、未 enrich 的 IT 類招標案逐案補欄位;限量(--limit)+ 逐案節流(--throttle)+ 被封鎖即停。半月排程在 sync 後執行,再重匯 data.js
+  - 看板新增「截標/開標」欄(剩餘天數 badge:剩 N 天 / 今天截止 / 已截止),招標案名稱下顯示預算金額
+
+### Note
+- 真實頁實證:**開標時間**在 web.pcc 明細頁是可靠的表格欄位(投標文件須在開標前送達,開標時間=實際投標 deadline);截止投標多數頁也可從表格抽到,抽不到時看板以開標時間為準
+- enrich 走逐案爬明細頁(反爬風險),刻意限量+節流,僅覆蓋「看板會顯示、仍可投標」的近期 IT 招標案
+
+### Verified
+- 99 tests 通過(新增 24:明細解析 15 + enricher 5 + get_tender_detail 4)
+- 看板 Playwright:8 欄表頭、剩餘天數/已截止/開標/決標各情境渲染正確、零 JS error
+
 ## [0.4.0] - 2026-06-13
 
 ### Added
