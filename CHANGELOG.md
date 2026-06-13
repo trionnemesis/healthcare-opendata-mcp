@@ -14,8 +14,11 @@
   - 移除 `pcc-tender-mohw`、`nhi-hospital-district`/`regional`、`nhi-hospital-bed-ratio`、`nhi-insured-population`、`mohw-outpatient-rate`、`mnd-military-hospital-fee`
   - VACUUM 後 DB 180MB → 50MB
 
+### Fixed
+- enricher 對齊當前 PCC(2026):持久 session(先 GET indexTenderBasic 取 JSESSIONID,否則搜尋只回表單頁)+ 明細連結改抓 `/prkms/urlSelector/common/tpam?pk=`(舊 readBulletion 保留容錯)。實證可取近期衛福部資訊勞務招標案的截標/開標/預算 — 看板「截標/開標」欄已有真實值(如 115-2-013 截標 2026-06-16、預算 761 萬);舊案截標後明細下架,抓不到屬正常
+
 ### Verified
-- 105 tests 通過(新增 6:adapter 主題篩選);prune dry-run/apply 筆數一致(全衛福部、6 機關、招標 24/決標 34)
+- 106 tests 通過(新增 6 adapter 主題篩選 + 1 tpam 連結);prune dry-run/apply 筆數一致(58 筆全衛福部、6 機關、招標 24/決標 34);真實 enrich 5 近期招標案成功;看板 Playwright 截標欄渲染剩餘天數正確
 
 ## [0.5.0] - 2026-06-13
 
