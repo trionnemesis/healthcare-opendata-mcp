@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.6.0] - 2026-06-13
+
+### Changed
+- **範圍縮小**:由「全機關標案 × 全醫療健保開放資料」收斂為 **衛生福利部轄下機關的資訊勞務相關標案 + 健保診所**(案量精簡到可逐案 enrich 截標/開標/預算)
+  - `PccTenderAdapter` 新增 `title_includes` / `title_excludes`(衛福部範圍內再篩資訊勞務 IT 關鍵字);`_keep()` 統一機關前綴 + 主題篩選
+  - `cli.py` 只註冊 `nhi-clinic` + 衛福部資訊勞務 `pcc-tender`(dataset_id 由 `pcc-tender-mohw` 改為 `pcc-tender`);移除全機關 pcc-tender、其他醫院/健保統計/靜態 CSV 資料集;IT 關鍵字提為 `IT_INCLUDE`/`IT_EXCLUDE` 常數(與看板/排程同步)
+  - 看板 + 半月排程縮成「衛福部資訊勞務」(文案/快照/查詢同步)
+
+### Removed
+- local DB 清除超範圍資料(`scripts/prune_local_db.py`,dry-run 預設 + `--apply`):
+  - 保留 `nhi-clinic`、`pcc-tender` 就地縮成衛福部資訊勞務(10,988 → 58 筆)
+  - 移除 `pcc-tender-mohw`、`nhi-hospital-district`/`regional`、`nhi-hospital-bed-ratio`、`nhi-insured-population`、`mohw-outpatient-rate`、`mnd-military-hospital-fee`
+  - VACUUM 後 DB 180MB → 50MB
+
+### Fixed
+- enricher 對齊當前 PCC(2026):持久 session(先 GET indexTenderBasic 取 JSESSIONID,否則搜尋只回表單頁)+ 明細連結改抓 `/prkms/urlSelector/common/tpam?pk=`(舊 readBulletion 保留容錯)。實證可取近期衛福部資訊勞務招標案的截標/開標/預算 — 看板「截標/開標」欄已有真實值(如 115-2-013 截標 2026-06-16、預算 761 萬);舊案截標後明細下架,抓不到屬正常
+
+### Verified
+- 106 tests 通過(新增 6 adapter 主題篩選 + 1 tpam 連結);prune dry-run/apply 筆數一致(58 筆全衛福部、6 機關、招標 24/決標 34);真實 enrich 5 近期招標案成功;看板 Playwright 截標欄渲染剩餘天數正確
+
+## [0.5.0] - 2026-06-13
+
+### Added
+- 招標案截標/開標/預算 enrich(看板「截標/開標」欄需求):
+  - `pcc-tender` / `pcc-tender-mohw` 新增欄位 `bid_deadline`(截止投標)、`open_date`(開標時間)、`budget`(預算金額)— 半月 open data 招標檔沒有這些,只能逐案爬 web.pcc 明細頁
+  - `adapters/_pcc_detail.py`:明細頁解析純函式(stdlib html.parser,不引入 selectolax),擷取截標/開標/預算;th/td 與 td/td 雙模型、忽略 script/style 內文字。fixture 取自 g0VMCP(MIT)實戰頁驗證
+  - `adapters/pcc_detail.py`:`PccDetailEnricher`(DI HTTP client)— POST readTenderBasic 搜尋 → readBulletion 明細頁 → 解析;403/429 raise BlockedError
+  - MCP tool `get_tender_detail(job_number)`:即時抓單案明細(截標/開標/預算/採購屬性)
+  - `scripts/enrich_bid_deadline.py`:對近期、未決標、未 enrich 的 IT 類招標案逐案補欄位;限量(--limit)+ 逐案節流(--throttle)+ 被封鎖即停。半月排程在 sync 後執行,再重匯 data.js
+  - 看板新增「截標/開標」欄(剩餘天數 badge:剩 N 天 / 今天截止 / 已截止),招標案名稱下顯示預算金額
+
+### Note
+- 真實頁實證:**開標時間**在 web.pcc 明細頁是可靠的表格欄位(投標文件須在開標前送達,開標時間=實際投標 deadline);截止投標多數頁也可從表格抽到,抽不到時看板以開標時間為準
+- enrich 走逐案爬明細頁(反爬風險),刻意限量+節流,僅覆蓋「看板會顯示、仍可投標」的近期 IT 招標案
+
+### Verified
+- 99 tests 通過(新增 24:明細解析 15 + enricher 5 + get_tender_detail 4)
+- 看板 Playwright:8 欄表頭、剩餘天數/已截止/開標/決標各情境渲染正確、零 JS error
+
+## [0.4.0] - 2026-06-13
+
+### Added
+- `pcc-tender`(全機關政府採購標案):`PccTenderAdapter` 第二實例(`agency_prefix=""`、`collection="procurement"`)— twinkle-hub 故障停用後,Cowork「政府採購 IT 標案看板」與半月排程 `pcc-it-tender-biweekly` 的替代資料源(dataset_id 與欄位與 twinkle 完全相容,查詢端僅 `ILIKE` 需改 `LIKE`)
+- `PccTenderAdapter` 新增 `collection` 參數;`agency_prefix=""` 表全機關不過濾
+- `scripts/export_board_data.py`:匯出 `pcc-tender` 全量為看板 `data.js` 快照 — Cowork artifact 的 `callMcpTool` 僅能呼叫 claude.ai remote connector(無法呼叫本機 stdio MCP),看板改讀快照,由半月排程在 sync 後重新匯出
+
+### Changed
+- `query_rows` / `search_records` limit 硬上限 200 → 400(對齊看板單次查詢量 400;executor 唯讀連線 + authorizer 白名單 + VM 步數護欄不變)
+- `hcmcp-sync --tender-months` 預設 3 → 12(支撐看板「近 1 年」招標視圖;PCC 站上實際可回溯約 6 個月,歷史隨每次同步累積)
+
+### Verified
+- 75 tests 通過(新增 3:全機關不過濾、dataset meta、limit 400 釘規格)
+- live sync(2026-06-13):pcc-opendata +12,270 筆(`pcc-tender` 全機關,招標 6,614/決標 4,374,回溯至 2025-06)+177 筆(mohw,招標回溯 12 月)
+- 看板實際 WHERE(IT 關鍵字 + 近 90 天)經 QueryService 回 274 筆 / limit=400 未截斷(舊上限 200 會截斷此查詢)
+
 ## [0.3.0] - 2026-06-11
 
 ### Added

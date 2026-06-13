@@ -1,7 +1,8 @@
-"""PccTenderAdapter — PCC 半月 XML → pcc-tender-mohw 資料集。
+"""PccTenderAdapter — PCC 半月 XML → pcc-tender / pcc-tender-mohw 資料集。
 
-對齊 twinkle-hub pcc-tender 欄位(英文欄名,既有查詢模式可直接沿用),
-範圍縮限機關名稱以「衛生福利部」開頭(含轄下機關與部立醫院)。
+對齊 twinkle-hub pcc-tender 欄位(英文欄名,既有查詢模式可直接沿用)。
+agency_prefix 縮限機關範圍(預設「衛生福利部」含轄下機關與部立醫院);
+傳空字串=全機關,供 twinkle-hub 停用後的看板/排程沿用原 pcc-tender 查詢。
 解析純函式 vendored 自 g0VMCP(_pcc_opendata.py),兩專案零耦合。
 """
 from __future__ import annotations
@@ -36,6 +37,10 @@ PCC_TENDER_COLUMNS = tuple(
         "award_way",
         "award_price",
         "notice_date",
+        # 明細頁加值欄位(初始空,由 enrich_bid_deadline 補;招標階段最關鍵)
+        "bid_deadline",
+        "open_date",
+        "budget",
     )
 )
 
@@ -75,22 +80,41 @@ class PccTenderAdapter:
         tender_months: int = 3,
         agency_prefix: str = "衛生福利部",
         dataset_id: str = "pcc-tender-mohw",
+        collection: str = "healthcare",
+        title_includes: tuple[str, ...] = (),
+        title_excludes: tuple[str, ...] = (),
         today: date | None = None,
         http_get: Callable[[str], Awaitable[bytes]] | None = None,
     ) -> None:
         self._award_months = award_months
         self._tender_months = tender_months
         self._agency_prefix = agency_prefix
+        # 主題關鍵字以小寫比對(title.lower()),中文不受影響、英文(AI/IT)大小寫無關
+        self._title_includes = tuple(k.lower() for k in title_includes)
+        self._title_excludes = tuple(k.lower() for k in title_excludes)
         self._today = today or date.today()
         self._http_get = http_get or default_http_get
+        scope = f"{agency_prefix}範圍" if agency_prefix else "全機關"
+        topic = "資訊勞務" if title_includes else ""
         self._dataset = DatasetMeta(
             id=dataset_id,
             source_id=self.source_id,
-            title=f"政府採購標案({agency_prefix}範圍,twinkle pcc-tender 相容)",
+            title=f"政府採購標案({scope}{topic},twinkle pcc-tender 相容)",
             columns=PCC_TENDER_COLUMNS,
-            collection="healthcare",
+            collection=collection,
             license="政府資料開放授權條款 1.0",
         )
+
+    def _keep(self, org_name: str, title: str) -> bool:
+        """機關前綴 + 主題關鍵字篩選(includes 命中其一且不命中 excludes)。"""
+        if not org_name.strip().startswith(self._agency_prefix):
+            return False
+        t = (title or "").lower()
+        if self._title_includes and not any(k in t for k in self._title_includes):
+            return False
+        if any(k in t for k in self._title_excludes):
+            return False
+        return True
 
     def _build_refs(self) -> list[ResourceRef]:
         refs = [
@@ -127,13 +151,13 @@ class PccTenderAdapter:
             records = tuple(
                 self._award_record(row)
                 for row in pcc.parse_award_xml(text)
-                if row.org_name.strip().startswith(self._agency_prefix)
+                if self._keep(row.org_name, row.title)
             )
         else:
             records = tuple(
                 self._tender_record(row)
                 for row in pcc.parse_tender_xml(text)
-                if row.org_name.strip().startswith(self._agency_prefix)
+                if self._keep(row.org_name, row.title)
             )
         return NormalizedBatch(dataset=self._dataset, records=records)
 
@@ -151,6 +175,9 @@ class PccTenderAdapter:
             "award_way": row.award_way,
             "award_price": row.award_price,
             "notice_date": _iso(row.notice_date),
+            "bid_deadline": "",
+            "open_date": "",
+            "budget": "",
         }
         return Record(
             dataset_id=self._dataset.id,
@@ -172,6 +199,9 @@ class PccTenderAdapter:
             "award_way": "",
             "award_price": "",
             "notice_date": "",
+            "bid_deadline": "",
+            "open_date": "",
+            "budget": "",
         }
         return Record(
             dataset_id=self._dataset.id,

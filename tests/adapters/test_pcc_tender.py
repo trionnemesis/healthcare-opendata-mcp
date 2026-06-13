@@ -112,6 +112,88 @@ class TestNormalize:
         assert batch.records == ()
 
 
+class TestFullScopeDataset:
+    """agency_prefix=""(全機關)— Cowork IT 標案看板的 twinkle-hub 替代資料源。"""
+
+    def _full(self) -> PccTenderAdapter:
+        return _adapter(
+            agency_prefix="", dataset_id="pcc-tender", collection="procurement"
+        )
+
+    def test_empty_prefix_keeps_all_agencies(self):
+        ref = _ref(self._full(), "award")
+        batch = self._full().normalize(
+            RawPayload(ref=ref, content=_AWARD_XML.encode("utf-8"))
+        )
+        agencies = {r.payload["agency"] for r in batch.records}
+        assert agencies == {"衛生福利部疾病管制署", "交通部公路局"}
+
+    def test_dataset_meta_reflects_full_scope(self):
+        ref = _ref(self._full(), "tender")
+        batch = self._full().normalize(
+            RawPayload(ref=ref, content=_TENDER_XML.encode("utf-8"))
+        )
+        assert batch.dataset.id == "pcc-tender"
+        assert batch.dataset.collection == "procurement"
+        assert "全機關" in batch.dataset.title
+
+
+class TestTopicFilter:
+    """title_includes/excludes — 衛福部範圍內再篩「資訊勞務相關」(看板用)。"""
+
+    def test_includes_keeps_matching_title(self):
+        a = _adapter(agency_prefix="衛生福利部", title_includes=("資訊",))
+        batch = a.normalize(
+            RawPayload(ref=_ref(a, "award"), content=_AWARD_XML.encode("utf-8"))
+        )
+        # 疾管署「疫苗冷鏈資訊系統維運案」含資訊;交通部非衛福部已濾
+        assert len(batch.records) == 1
+        assert batch.records[0].payload["agency"] == "衛生福利部疾病管制署"
+
+    def test_includes_drops_non_matching(self):
+        a = _adapter(agency_prefix="衛生福利部", title_includes=("區塊鏈",))
+        batch = a.normalize(
+            RawPayload(ref=_ref(a, "award"), content=_AWARD_XML.encode("utf-8"))
+        )
+        assert len(batch.records) == 0
+
+    def test_excludes_removes_matching(self):
+        a = _adapter(
+            agency_prefix="衛生福利部",
+            title_includes=("資訊", "系統"),
+            title_excludes=("疫苗",),
+        )
+        batch = a.normalize(
+            RawPayload(ref=_ref(a, "award"), content=_AWARD_XML.encode("utf-8"))
+        )
+        assert len(batch.records) == 0  # 疫苗冷鏈被排除
+
+    def test_empty_includes_keeps_all_in_agency(self):
+        a = _adapter(agency_prefix="衛生福利部")  # 不傳 includes → 不篩主題
+        batch = a.normalize(
+            RawPayload(ref=_ref(a, "award"), content=_AWARD_XML.encode("utf-8"))
+        )
+        assert len(batch.records) == 1
+
+    def test_tender_topic_filter(self):
+        a = _adapter(agency_prefix="衛生福利部", title_includes=("網站",))
+        batch = a.normalize(
+            RawPayload(ref=_ref(a, "tender"), content=_TENDER_XML.encode("utf-8"))
+        )
+        assert len(batch.records) == 1  # 116年網站維運案
+
+    def test_title_includes_marks_dataset_title(self):
+        a = _adapter(
+            agency_prefix="衛生福利部",
+            dataset_id="pcc-tender",
+            title_includes=("資訊",),
+        )
+        batch = a.normalize(
+            RawPayload(ref=_ref(a, "tender"), content=_TENDER_XML.encode("utf-8"))
+        )
+        assert "資訊勞務" in batch.dataset.title
+
+
 def test_rejects_xml_doctype_payload():
     from health_opendata_mcp.adapters import _pcc_opendata as pcc
 

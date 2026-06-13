@@ -7,7 +7,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from health_opendata_mcp.contracts import DatasetNotFoundError, QueryResult
+from health_opendata_mcp.adapters.pcc_detail import PccDetailEnricher, default_client
+from health_opendata_mcp.contracts import (
+    BlockedError,
+    DatasetNotFoundError,
+    QueryResult,
+)
 from health_opendata_mcp.domain.query_guard import DEFAULT_LIMIT, QueryValidationError
 from health_opendata_mcp.repository.query_executor import QueryDeniedError
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
@@ -22,8 +27,11 @@ def _result_dict(result: QueryResult) -> dict[str, Any]:
 
 
 class QueryService:
-    def __init__(self, repo: SqliteRepository) -> None:
+    def __init__(
+        self, repo: SqliteRepository, enricher: PccDetailEnricher | None = None
+    ) -> None:
         self._repo = repo
+        self._enricher = enricher  # None → 首次使用時以 default_client 建立(lazy)
 
     async def list_sources(self) -> list[dict[str, Any]]:
         return [
@@ -109,3 +117,26 @@ class QueryService:
         if rec is None:
             raise ValueError(f"record 不存在: {dataset_id}/{natural_key}")
         return rec
+
+    async def get_tender_detail(self, job_number: str) -> dict[str, Any]:
+        """即時抓 web.pcc 標案明細,回截標/開標/預算等(半月 open data 缺的加值欄位)。"""
+        job_number = job_number.strip()
+        if not job_number:
+            raise ValueError("job_number 不可為空")
+        if self._enricher is None:
+            self._enricher = PccDetailEnricher(default_client())
+        try:
+            detail = await self._enricher.fetch_detail(job_number)
+        except BlockedError as exc:
+            raise ValueError("PCC 暫時限流/維護,稍後再試") from exc
+        if detail is None:
+            raise ValueError(f"查無此案明細: {job_number}")
+        return {
+            "job_number": job_number,
+            "title": detail.title,
+            "agency": detail.agency,
+            "bid_deadline": detail.bid_deadline,
+            "open_date": detail.open_date,
+            "budget": detail.budget,
+            "procurement_attr": detail.procurement_attr,
+        }
