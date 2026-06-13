@@ -16,6 +16,7 @@ from health_opendata_mcp.adapters import _pcc_detail as detail
 from health_opendata_mcp.contracts import BlockedError
 
 _BASE = "https://web.pcc.gov.tw"
+_INDEX_URL = f"{_BASE}/prkms/tender/common/basic/indexTenderBasic"
 _SEARCH_URL = f"{_BASE}/prkms/tender/common/basic/readTenderBasic"
 _SEARCH_FORM = {
     "pageSize": "50",
@@ -76,24 +77,35 @@ class PccDetailEnricher:
 
 
 def default_client() -> HttpClient:
-    """正式用 httpx client:持 cookie jar、合理 UA、follow redirects。"""
+    """正式用 httpx client:單一持久 AsyncClient(cookie jar 跨案共用)。
+
+    當前 PCC 搜尋需 session — 首次請求前先 GET indexTenderBasic 取得 JSESSIONID,
+    否則 POST readTenderBasic 只回填表單頁、不執行搜尋(2026 實測)。
+    """
     import httpx
 
     class _HttpxClient:
         _UA = "Mozilla/5.0 (Macintosh) hcmcp-enrich/0.1 (+gov open data)"
 
-        async def get(self, url: str) -> HttpResp:
-            async with httpx.AsyncClient(
+        def __init__(self) -> None:
+            self._c = httpx.AsyncClient(
                 timeout=60, follow_redirects=True, headers={"User-Agent": self._UA}
-            ) as c:
-                r = await c.get(url)
-                return HttpResp(r.status_code, r.text)
+            )
+            self._session_ready = False
+
+        async def _ensure(self) -> None:
+            if not self._session_ready:
+                await self._c.get(_INDEX_URL)  # 建 JSESSIONID
+                self._session_ready = True
+
+        async def get(self, url: str) -> HttpResp:
+            await self._ensure()
+            r = await self._c.get(url)
+            return HttpResp(r.status_code, r.text)
 
         async def post(self, url: str, data: dict[str, str]) -> HttpResp:
-            async with httpx.AsyncClient(
-                timeout=60, follow_redirects=True, headers={"User-Agent": self._UA}
-            ) as c:
-                r = await c.post(url, data=data)
-                return HttpResp(r.status_code, r.text)
+            await self._ensure()
+            r = await self._c.post(url, data=data)
+            return HttpResp(r.status_code, r.text)
 
     return _HttpxClient()

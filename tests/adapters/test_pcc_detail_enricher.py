@@ -38,6 +38,12 @@ class TestFindDetailPath:
         assert path is not None and "readBulletion" in path
         assert "caseNo=1130108-5" in path
 
+    def test_matches_tpam_link(self):
+        # 當前 PCC(2026)結果頁明細連結為 tpam?pk=<base64>(不含 caseNo)
+        html = '<a href="/prkms/urlSelector/common/tpam?pk=NzEyNDQ3MjA=">明細</a>'
+        path = detail.find_detail_path(html, "115-2-013")
+        assert path == "/prkms/urlSelector/common/tpam?pk=NzEyNDQ3MjA="
+
     def test_no_link_returns_none(self):
         assert detail.find_detail_path("<html>查無資料</html>", "X") is None
 

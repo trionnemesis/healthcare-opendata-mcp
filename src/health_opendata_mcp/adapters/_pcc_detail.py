@@ -143,14 +143,19 @@ def extract_fields(html: str) -> dict[str, str]:
     return parser.fields
 
 
-_HREF_RE = re.compile(r'href="([^"]*readBulletion[^"]*)"', re.IGNORECASE)
+# 當前 PCC(2026):結果頁明細連結為 /prkms/urlSelector/common/tpam?pk=<base64>
+# (GET 後 302 轉址至 /tps/QueryTender/query/searchTenderDetail);保留 readBulletion 舊格式容錯
+_HREF_RE = re.compile(
+    r'href="([^"]*(?:urlSelector/common/tpam\?pk=|readBulletion)[^"]*)"',
+    re.IGNORECASE,
+)
 
 
 def find_detail_path(search_html: str, job_number: str) -> str | None:
-    """從 readTenderBasic 搜尋結果頁找該案的明細頁路徑(readBulletion?...caseNo=)。
+    """從 readTenderBasic 搜尋結果頁找該案明細頁路徑(tpam?pk= 或舊 readBulletion)。
 
-    優先 caseNo 完全匹配的連結;無完全匹配時回第一個 readBulletion 連結(容錯)。
-    回相對路徑(/tps/...);查無回 None。
+    優先 caseNo 完全匹配(readBulletion 舊格式有);tpam 連結不含 caseNo → 回首筆
+    (依案號搜尋通常唯一結果)。回相對路徑;查無回 None。
     """
     hrefs = _HREF_RE.findall(search_html or "")
     if not hrefs:
@@ -158,7 +163,6 @@ def find_detail_path(search_html: str, job_number: str) -> str | None:
     for href in hrefs:
         if f"caseNo={job_number}" in href or f"caseNo={job_number}&" in href:
             return href
-    # 容錯:job_number 含特殊字元(URL-encoded)時退回首筆
     return hrefs[0]
 
 
