@@ -1,22 +1,21 @@
 # Healthcare OpenData MCP (hcmcp)
 
-> 醫療健保開放資料 MCP — 健保署開放資料 × 政府採購標案,對齊 Twinkle Hub `query_rows`,完全自主資料來源
+> 衛生福利部資訊勞務標案 × 健保診所開放資料 MCP — 對齊 Twinkle Hub `query_rows`,完全自主資料來源
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![FastMCP](https://img.shields.io/badge/built%20with-FastMCP-orange)](https://github.com/jlowin/fastmcp)
 
-因 hub.twinkleai.tw 政策異動停用而自建的替代方案:以 [FastMCP](https://github.com/jlowin/fastmcp) 封裝台灣醫療健保開放資料與衛福部標案,提供 Twinkle Hub 相容的 SQL 式查詢(`query_rows`),**不依賴任何第三方聚合服務**。
+因 hub.twinkleai.tw 政策異動停用而自建的替代方案:以 [FastMCP](https://github.com/jlowin/fastmcp) 封裝,提供 Twinkle Hub 相容的 SQL 式查詢(`query_rows`),**不依賴任何第三方聚合服務**。
 
 ## 資料來源(全部一級官方來源)
 
+範圍聚焦(2026-06):**衛生福利部轄下機關的資訊勞務相關標案** + **健保診所**——案量精簡到可逐案 enrich 標案截標/開標/預算。
+
 | 來源 | 資料集 | 取得形式 |
 |------|--------|---------|
-| 健保署資料開放平台 `info.nhi.gov.tw` | 特約醫事機構(地區/區域醫院、診所)、保險病床比率 | CSV API,每日更新、免 key |
-| 政府開放資料靜態檔(`vac.gov.tw` / `mohw.gov.tw` / `mnd.gov.tw`) | 全民健保人數、健保平均門診就診率、國軍醫院健保不給付收費標準 | data.gov.tw distribution CSV |
-| 政府電子採購網 `web.pcc.gov.tw` | `pcc-tender`(全機關)+ `pcc-tender-mohw`(衛福部子集),twinkle pcc-tender 欄位相容 | 半月公開 XML |
-
-涵蓋 Twinkle Hub healthcare collection 全部 7 個資料集(data.gov.tw #39282/#39281/#9402/#25842/#176510/#142696 + pcc-tender 衛福部範圍)。
+| 政府電子採購網 `web.pcc.gov.tw` | `pcc-tender`(衛福部轄下機關 · 資訊勞務,twinkle pcc-tender 欄位相容,含 enrich 的 `bid_deadline`/`open_date`/`budget`) | 半月公開 XML + 明細頁 enrich |
+| 健保署資料開放平台 `info.nhi.gov.tw` | `nhi-clinic`(健保特約診所) | CSV API,每日更新、免 key |
 
 ## 快速開始
 

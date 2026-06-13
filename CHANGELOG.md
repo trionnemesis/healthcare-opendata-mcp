@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0] - 2026-06-13
+
+### Changed
+- **範圍縮小**:由「全機關標案 × 全醫療健保開放資料」收斂為 **衛生福利部轄下機關的資訊勞務相關標案 + 健保診所**(案量精簡到可逐案 enrich 截標/開標/預算)
+  - `PccTenderAdapter` 新增 `title_includes` / `title_excludes`(衛福部範圍內再篩資訊勞務 IT 關鍵字);`_keep()` 統一機關前綴 + 主題篩選
+  - `cli.py` 只註冊 `nhi-clinic` + 衛福部資訊勞務 `pcc-tender`(dataset_id 由 `pcc-tender-mohw` 改為 `pcc-tender`);移除全機關 pcc-tender、其他醫院/健保統計/靜態 CSV 資料集;IT 關鍵字提為 `IT_INCLUDE`/`IT_EXCLUDE` 常數(與看板/排程同步)
+  - 看板 + 半月排程縮成「衛福部資訊勞務」(文案/快照/查詢同步)
+
+### Removed
+- local DB 清除超範圍資料(`scripts/prune_local_db.py`,dry-run 預設 + `--apply`):
+  - 保留 `nhi-clinic`、`pcc-tender` 就地縮成衛福部資訊勞務(10,988 → 58 筆)
+  - 移除 `pcc-tender-mohw`、`nhi-hospital-district`/`regional`、`nhi-hospital-bed-ratio`、`nhi-insured-population`、`mohw-outpatient-rate`、`mnd-military-hospital-fee`
+  - VACUUM 後 DB 180MB → 50MB
+
+### Verified
+- 105 tests 通過(新增 6:adapter 主題篩選);prune dry-run/apply 筆數一致(全衛福部、6 機關、招標 24/決標 34)
+
 ## [0.5.0] - 2026-06-13
 
 ### Added
