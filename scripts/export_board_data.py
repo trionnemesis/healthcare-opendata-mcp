@@ -9,7 +9,62 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import re
 import sqlite3
+from collections import defaultdict
+
+def _normalize_name(name: str) -> str:
+    """Strip trailing English alias like '公司 (CORP NAME)'."""
+    return re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
+
+
+def _vendor_stats(con: sqlite3.Connection) -> dict:
+    """Aggregate award records by vendor: count, total amount, percentages."""
+    rows = con.execute(
+        'SELECT "companies", CAST("award_price" AS INTEGER)'
+        ' FROM "ds_pcc_tender"'
+        " WHERE \"announcement_type\" = '決標公告'"
+        "   AND \"companies\" IS NOT NULL AND \"companies\" != ''"
+    ).fetchall()
+
+    counts: dict[str, int] = defaultdict(int)
+    amounts: dict[str, int] = defaultdict(int)
+
+    for companies_str, amount in rows:
+        # split only on commas outside parentheses (EN company names contain commas)
+        for raw in re.split(r",\s*(?![^(]*\))", companies_str or ""):
+            name = _normalize_name(raw)
+            if name:
+                counts[name] += 1
+                amounts[name] += amount or 0
+
+    total_count = sum(counts.values())
+    total_amount = sum(amounts.values())
+
+    vendors = sorted(
+        [
+            {
+                "name": name,
+                "award_count": counts[name],
+                "total_amount": amounts[name],
+                "count_pct": (
+                    round(counts[name] / total_count * 100, 1) if total_count else 0
+                ),
+                "amount_pct": (
+                    round(amounts[name] / total_amount * 100, 1) if total_amount else 0
+                ),
+            }
+            for name in counts
+        ],
+        key=lambda v: (-v["award_count"], -v["total_amount"]),
+    )
+
+    return {
+        "total_award_records": total_count,
+        "total_amount": total_amount,
+        "vendors": vendors,
+    }
+
 
 COLUMNS = (
     "date",
@@ -34,6 +89,7 @@ def export(db_path: str, out_path: str) -> int:
         rows = con.execute(
             f'SELECT {cols} FROM "ds_pcc_tender" ORDER BY "date" DESC'
         ).fetchall()
+        vendor_stats = _vendor_stats(con)
     finally:
         con.close()
     payload = {
@@ -43,6 +99,7 @@ def export(db_path: str, out_path: str) -> int:
         "max_date": rows[0][0] if rows else None,
         "columns": list(COLUMNS),
         "rows": [list(r) for r in rows],
+        "vendor_stats": vendor_stats,
     }
     js = (
         "window.__PCC_DATA = "

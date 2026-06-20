@@ -170,6 +170,69 @@ class TestRecords:
             await service.get_record("pcc-tender-mohw", "zzz")
 
 
+class TestGetVendorStats:
+    async def _make_service(self, tmp_path, records):
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        await repo.register_source(
+            SourceInfo(id="pcc", name="PCC", platform="web.pcc.gov.tw",
+                       access_strategy=AccessStrategy.STATIC_FILE)
+        )
+        ds = DatasetMeta(
+            id="pcc-tender",
+            source_id="pcc",
+            title="PCC",
+            columns=(
+                ColumnSpec("announcement_type"),
+                ColumnSpec("companies"),
+                ColumnSpec("award_price"),
+            ),
+            collection="healthcare",
+        )
+        await repo.upsert_batch(
+            NormalizedBatch(
+                dataset=ds,
+                records=tuple(
+                    Record(dataset_id=ds.id, natural_key=str(i), payload=r)
+                    for i, r in enumerate(records)
+                ),
+            )
+        )
+        return QueryService(repo)
+
+    async def test_strips_english_alias_and_counts(self, tmp_path):
+        svc = await self._make_service(tmp_path, [
+            {"announcement_type": "決標公告", "companies": "宏碁資訊服務股份有限公司 (ACER E-ENABLING)", "award_price": "5000000"},
+            {"announcement_type": "決標公告", "companies": "宏碁資訊服務股份有限公司 (ACER E-ENABLING)", "award_price": "3000000"},
+            {"announcement_type": "決標公告", "companies": "凌網資訊股份有限公司 (HYWEB)", "award_price": "4000000"},
+            {"announcement_type": "招標公告", "companies": "", "award_price": ""},  # excluded
+        ])
+        result = await svc.get_vendor_stats("pcc-tender")
+        assert result["total_award_records"] == 3
+        assert result["vendors_total"] == 2
+        top = result["vendors"][0]
+        assert top["name"] == "宏碁資訊服務股份有限公司"
+        assert top["award_count"] == 2
+        assert top["total_amount"] == 8_000_000
+        assert top["count_pct"] == round(2 / 3 * 100, 1)
+
+    async def test_top_n_truncates_vendors(self, tmp_path):
+        records = [
+            {"announcement_type": "決標公告", "companies": f"廠商{i}股份有限公司", "award_price": "1000000"}
+            for i in range(5)
+        ]
+        svc = await self._make_service(tmp_path, records)
+        result = await svc.get_vendor_stats("pcc-tender", top_n=2)
+        assert len(result["vendors"]) == 2
+        assert result["vendors_total"] == 5
+
+    async def test_unknown_dataset_raises_value_error(self, tmp_path):
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        with pytest.raises(ValueError, match="dataset 不存在"):
+            await QueryService(repo).get_vendor_stats("nope")
+
+
 class TestServerWiring:
     async def test_all_tools_registered(self, tmp_path):
         from health_opendata_mcp.mcp_server.server import build_server

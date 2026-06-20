@@ -83,6 +83,18 @@ def build_server(
         return await service.get_record(dataset_id, natural_key)
 
     @mcp.tool()
+    async def get_vendor_stats(
+        dataset_id: str = "pcc-tender", top_n: int = 10
+    ) -> dict:
+        """得標廠商排名統計(依次數排序),回 vendors 陣列含 name/award_count/total_amount/count_pct/amount_pct。
+
+        dataset_id: pcc-tender(全機關,預設) 或 pcc-tender-mohw(衛福部子集)。
+        top_n: 前 N 名(預設 10,上限 50)。
+        """
+        top_n = min(max(1, top_n), 50)
+        return await service.get_vendor_stats(dataset_id, top_n)
+
+    @mcp.tool()
     async def get_tender_detail(job_number: str) -> dict:
         """即時抓政府電子採購網標案明細,補半月 open data 缺的加值欄位。
 

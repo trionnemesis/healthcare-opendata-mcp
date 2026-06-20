@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import re
+from collections import defaultdict
 from typing import Any
 
 from health_opendata_mcp.adapters.pcc_detail import PccDetailEnricher, default_client
@@ -117,6 +119,76 @@ class QueryService:
         if rec is None:
             raise ValueError(f"record 不存在: {dataset_id}/{natural_key}")
         return rec
+
+    async def get_vendor_stats(
+        self,
+        dataset_id: str = "pcc-tender",
+        top_n: int = 10,
+    ) -> dict[str, Any]:
+        """得標廠商排名統計：次數、金額、占比。"""
+        try:
+            result = await self._repo.query_rows(
+                dataset_id,
+                columns=["companies", "award_price"],
+                where=(
+                    "announcement_type='決標公告'"
+                    " AND companies IS NOT NULL AND companies != ''"
+                ),
+                limit=400,
+            )
+        except DatasetNotFoundError as exc:
+            raise ValueError(f"dataset 不存在: {dataset_id}") from exc
+        except (QueryValidationError, QueryDeniedError) as exc:
+            raise ValueError(str(exc)) from exc
+
+        col = {name: i for i, name in enumerate(result.columns)}
+        counts: dict[str, int] = defaultdict(int)
+        amounts: dict[str, int] = defaultdict(int)
+
+        for row in result.rows:
+            raw_names = re.split(r",\s*(?![^(]*\))", row[col["companies"]] or "")
+            try:
+                amt = int(row[col["award_price"]] or 0)
+            except (ValueError, TypeError):
+                amt = 0
+            for raw in raw_names:
+                name = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip()
+                if name:
+                    counts[name] += 1
+                    amounts[name] += amt
+
+        total_count = sum(counts.values())
+        total_amount = sum(amounts.values())
+
+        vendors = sorted(
+            [
+                {
+                    "name": name,
+                    "award_count": counts[name],
+                    "total_amount": amounts[name],
+                    "count_pct": (
+                        round(counts[name] / total_count * 100, 1)
+                        if total_count
+                        else 0
+                    ),
+                    "amount_pct": (
+                        round(amounts[name] / total_amount * 100, 1)
+                        if total_amount
+                        else 0
+                    ),
+                }
+                for name in counts
+            ],
+            key=lambda v: (-v["award_count"], -v["total_amount"]),
+        )
+
+        return {
+            "dataset_id": dataset_id,
+            "total_award_records": total_count,
+            "total_amount": total_amount,
+            "vendors": vendors[:top_n],
+            "vendors_total": len(vendors),
+        }
 
     async def get_tender_detail(self, job_number: str) -> dict[str, Any]:
         """即時抓 web.pcc 標案明細,回截標/開標/預算等(半月 open data 缺的加值欄位)。"""
