@@ -31,6 +31,10 @@ python3.11 -m venv .venv && .venv/bin/pip install -e .
 claude mcp add hcmcp -- /path/to/.venv/bin/hcmcp
 ```
 
+> **單一 DB 預設**:`hcmcp-sync`(寫入)與 `hcmcp` server(讀取)共用同一預設
+> `~/.hcmcp/hcmcp.db`。要改位置時**兩者都要**設環境變數 `HCMCP_DB`(sync 亦可用 `--db`),
+> 否則會「sync 寫 A、server 讀 B → 同步了卻查不到」。
+
 HTTP 模式(團隊共用 / 容器部署,MCP streamable HTTP):
 
 ```bash
