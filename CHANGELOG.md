@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.1] - 2026-06-27
+
+### Fixed
+- **DB 路徑單一真實來源**:`hcmcp-sync` 與 `hcmcp` server 預設 DB 統一為 `~/.hcmcp/hcmcp.db`。
+  `mcp_server/__main__.py` 移除冗餘的 `os.environ.get("HCMCP_DB", default_db_path())` 雙讀,
+  改直接用 `cli.default_db_path()`(其本就讀 `HCMCP_DB`)為唯一來源,杜絕 server 與 sync 預設漂移。
+  - 歷史地雷:本機看板半月排程(`~/.hcmcp/sync_board.sh`)、`~/.claude.json`、`.codex` 皆把
+    `HCMCP_DB` 指向專案目錄 `hcmcp.db`,而文件化預設 `~/.hcmcp/hcmcp.db` 為空殼 →
+    照 README 不帶 `--db` 執行 `hcmcp-sync` 會寫空殼,看板/MCP server 卻讀專案目錄,
+    形成「同步了卻查不到」假象。已將真資料(58 衛福部資訊勞務標案 + 24,582 健保診所)
+    遷至 `~/.hcmcp/hcmcp.db`,並把上述本機接線一律改用此正準 DB。
+  - README 補「sync 與 server 共用預設、改路徑要兩邊一起設 `HCMCP_DB`」防雷註記。
+
+### Verified
+- 新增 `tests/test_db_path.py`(預設 `~/.hcmcp/hcmcp.db` + `HCMCP_DB` 覆寫 + 單一來源);全測試套件通過。
+
 ## [0.6.0] - 2026-06-13
 
 ### Changed
