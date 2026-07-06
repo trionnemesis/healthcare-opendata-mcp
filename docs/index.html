@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Healthcare OpenData MCP | 問題導向入口</title>
+  <meta name="description" content="衛生福利部資訊勞務標案與健保診所開放資料的 MCP 工具，聚焦 Twinkle Hub query_rows 相容的可靠資料存取。" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="hero" id="top">
+      <div class="hero-copy">
+        <p class="eyebrow">Healthcare OpenData MCP</p>
+        <h1>官方資料存在，卻不容易被 AI Agent 可靠查詢</h1>
+        <p>
+          本專案用自建 MCP 服務，把衛生福利部資訊勞務標案與健保診所開放資料，整理成可被 AI 工作流程直接查詢的可預期介面，降低對第三方服務的相依風險，保留可稽核的安全邊界。
+        </p>
+        <a class="cta" href="#get-started">先看接法</a>
+      </div>
+    </section>
+
+    <section class="container" id="problem">
+      <h2>為什麼需要這個專案？</h2>
+      <p class="section-intro">
+        在實務上，資料可用性與可查詢性往往是問題本身：資料分散、格式不一致、欄位缺漏、上游服務不穩，會直接影響 AI agent 的決策品質。
+      </p>
+      <div class="cards">
+        <article class="card">
+          <h3>來源分散</h3>
+          <p>標案與健保資料來自不同官方來源，缺乏一致入口，對上游取樣流程與授權流程都有額外摩擦。</p>
+        </article>
+        <article class="card">
+          <h3>格式與欄位不一致</h3>
+          <p>半月 XML、CSV 及明細頁回傳格式差異大，直接讓下游查詢工具難以穩定處理，且增加 ETL 錯誤風險。</p>
+        </article>
+        <article class="card">
+          <h3>欄位不完整</h3>
+          <p>公開招標來源常缺少可直接比對的重要資訊，本專案以明細抓取補齊截標、開標與預算，補上招標決策必要欄位。</p>
+        </article>
+        <article class="card">
+          <h3>第三方不可控</h3>
+          <p>先前使用的 hub 服務政策調整導致可用性下滑，因此改走官方來源與自建服務，避免關鍵鏈路被中斷。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="container" id="response">
+      <h2>專案回應方式</h2>
+      <ol class="flow">
+        <li>
+          <span>1</span>
+          <div>
+            <h3>官方來源擷取</h3>
+            <p>定期同步「政府電子採購網」與「健保署」官方資料。</p>
+          </div>
+        </li>
+        <li>
+          <span>2</span>
+          <div>
+            <h3>規格化與 enrich</h3>
+            <p>資料正規化為可查詢 schema，並補齊明細頁缺漏欄位。</p>
+          </div>
+        </li>
+        <li>
+          <span>3</span>
+          <div>
+            <h3>唯讀 SQLite 服務化</h3>
+            <p>由 repository 寫入與快取，server 以唯讀方式提供一致查詢行為。</p>
+          </div>
+        </li>
+        <li>
+          <span>4</span>
+          <div>
+            <h3>MCP 對外介面</h3>
+            <p>提供 Twinkle 對齊模式的查詢工具，讓 Agent/開發者直接整合。</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section class="container" id="capabilities">
+      <h2>目前已有能力（可直接驗證）</h2>
+      <div class="cap-grid">
+        <article>
+          <h3>資料集</h3>
+          <ul>
+            <li>pcc-tender（衛福部資訊勞務）</li>
+            <li>pcc-tender-mohw（與 twinkle 欄位對齊）</li>
+            <li>nhi-clinic（健保診所開放資料）</li>
+          </ul>
+        </article>
+        <article>
+          <h3>MCP Tools</h3>
+          <ul>
+            <li>list_datasets</li>
+            <li>get_dataset</li>
+            <li>query_rows</li>
+            <li>search_records</li>
+            <li>get_record</li>
+            <li>get_tender_detail</li>
+            <li>list_sources</li>
+          </ul>
+        </article>
+        <article>
+          <h3>安全邊界</h3>
+          <ul>
+            <li>query_rows 只允許 SELECT 查詢</li>
+            <li>限制語法注入與多語句、DML/DDL、危險 keyword</li>
+            <li>SQLite read-only + authorizer 白名單</li>
+          </ul>
+        </article>
+        <article>
+          <h3>部署與整合</h3>
+          <ul>
+            <li>streamable HTTP 模式支援</li>
+            <li>healthz probe、GKE 部署文件與 manifest 可用</li>
+            <li>單一 DB 預設路徑與同步/查詢一致</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="container" id="get-started">
+      <h2>快速上手</h2>
+      <ol>
+        <li>建立並同步環境（含建置 SQLite DB）。</li>
+        <li>啟動 MCP server（stdio 或 HTTP）。</li>
+        <li>在 Claude / Agent 連線後，先用 list_datasets 再用 query_rows 開始分析。</li>
+      </ol>
+      <div class="links">
+        <a href="https://github.com/trionnemesis/healthcare-opendata-mcp">GitHub Repository</a>
+        <a href="https://github.com/trionnemesis/healthcare-opendata-mcp/blob/master/README.md">README</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a href="#top">回到頂部</a>
+    <span>醫療健保開放資料 MCP 專案導覽</span>
+  </footer>
+</body>
+</html>

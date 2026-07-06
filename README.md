@@ -6,6 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![FastMCP](https://img.shields.io/badge/built%20with-FastMCP-orange)](https://github.com/jlowin/fastmcp)
 
+GitHub Pages 導覽: https://trionnemesis.github.io/healthcare-opendata-mcp/
+
 因 hub.twinkleai.tw 政策異動停用而自建的替代方案:以 [FastMCP](https://github.com/jlowin/fastmcp) 封裝,提供 Twinkle Hub 相容的 SQL 式查詢(`query_rows`),**不依賴任何第三方聚合服務**。
 
 ## 資料來源(全部一級官方來源)
