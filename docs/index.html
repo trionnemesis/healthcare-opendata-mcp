@@ -8,23 +8,29 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <header class="topbar">
+    <a href="#top">Healthcare OpenData MCP</a>
+  </header>
   <main class="page">
     <section class="hero" id="top">
-      <div class="hero-copy">
-        <p class="eyebrow">Healthcare OpenData MCP</p>
-        <h1>官方資料存在，卻不容易被 AI Agent 可靠查詢</h1>
-        <p>
-          本專案用自建 MCP 服務，把衛生福利部資訊勞務標案與健保診所開放資料，整理成可被 AI 工作流程直接查詢的可預期介面，降低對第三方服務的相依風險，保留可稽核的安全邊界。
-        </p>
-        <a class="cta" href="#get-started">先看接法</a>
+      <p class="eyebrow">Open Data Infrastructure</p>
+      <h1>官方資料到 AI Agent 的最小化訊號通道</h1>
+      <p>
+        專案把衛生福利部資訊勞務標案與健保診所開放資料，轉成可直接被 MCP 工具查詢的穩定入口，讓資料可驗證、可回溯、可直接整合 AI workflow。
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#problem">先看痛點</a>
+        <a class="btn btn-outline" href="#get-started">立即上手</a>
       </div>
     </section>
 
     <section class="container" id="problem">
-      <h2>為什麼需要這個專案？</h2>
-      <p class="section-intro">
-        在實務上，資料可用性與可查詢性往往是問題本身：資料分散、格式不一致、欄位缺漏、上游服務不穩，會直接影響 AI agent 的決策品質。
-      </p>
+      <div class="section-head">
+        <h2>為什麼需要這個專案？</h2>
+        <p class="section-intro">
+          在實務上，資料可用性與可查詢性往往是問題本身：來源分散、欄位不一致、明細缺漏、服務不穩，直接影響 AI agent 的決策品質。
+        </p>
+      </div>
       <div class="cards">
         <article class="card">
           <h3>來源分散</h3>
@@ -46,7 +52,10 @@
     </section>
 
     <section class="container" id="response">
-      <h2>專案回應方式</h2>
+      <div class="section-head">
+        <h2>專案回應方式</h2>
+        <p class="section-intro">四步流程，把散落資料變成可複用的查詢介面。</p>
+      </div>
       <ol class="flow">
         <li>
           <span>1</span>
@@ -80,7 +89,10 @@
     </section>
 
     <section class="container" id="capabilities">
-      <h2>目前已有能力（可直接驗證）</h2>
+      <div class="section-head">
+        <h2>目前已有能力（可直接驗證）</h2>
+        <p class="section-intro">先用功能面，先確認你今天能否直接接上。</p>
+      </div>
       <div class="cap-grid">
         <article>
           <h3>資料集</h3>
@@ -122,7 +134,10 @@
     </section>
 
     <section class="container" id="get-started">
-      <h2>快速上手</h2>
+      <div class="section-head">
+        <h2>快速上手</h2>
+        <p class="section-intro">建置後建議用 list_datasets 再切入 query_rows。</p>
+      </div>
       <ol>
         <li>建立並同步環境（含建置 SQLite DB）。</li>
         <li>啟動 MCP server（stdio 或 HTTP）。</li>
@@ -137,7 +152,7 @@
 
   <footer>
     <a href="#top">回到頂部</a>
-    <span>醫療健保開放資料 MCP 專案導覽</span>
+    <span>Healthcare OpenData MCP</span>
   </footer>
 </body>
 </html>
