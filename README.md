@@ -1,121 +1,199 @@
-# Healthcare OpenData MCP (hcmcp)
+# healthcare-opendata-mcp 🏥
 
-> 衛生福利部資訊勞務標案 × 健保診所開放資料 MCP — 對齊 Twinkle Hub `query_rows`,完全自主資料來源
+> 官方開放資料 → 可查詢 MCP 介面，讓 AI agent 不必直接處理分散的政府資料來源。
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![FastMCP](https://img.shields.io/badge/built%20with-FastMCP-orange)](https://github.com/jlowin/fastmcp)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-GitHub Pages 導覽: https://trionnemesis.github.io/healthcare-opendata-mcp/
+`healthcare-opendata-mcp`（命令名稱：`hcmcp`）是一個自建、可部署的 MCP server：把政府電子採購網與健保署開放資料同步到 SQLite，再以穩定的 MCP tools 提供給 Claude 或其他 agent 查詢。
 
-因 hub.twinkleai.tw 政策異動停用而自建的替代方案:以 [FastMCP](https://github.com/jlowin/fastmcp) 封裝,提供 Twinkle Hub 相容的 SQL 式查詢(`query_rows`),**不依賴任何第三方聚合服務**。
+專案保留 Twinkle Hub `query_rows` 的 SQL 式查詢模式，但資料來源、同步流程與儲存層都由本專案自行掌握，不依賴第三方聚合服務。
 
-## 資料來源(全部一級官方來源)
+[GitHub Pages 導覽](https://trionnemesis.github.io/healthcare-opendata-mcp/) · [GitHub repository](https://github.com/trionnemesis/healthcare-opendata-mcp)
 
-範圍聚焦(2026-06):**衛生福利部轄下機關的資訊勞務相關標案** + **健保診所**——案量精簡到可逐案 enrich 標案截標/開標/預算。
+## Contents
 
-| 來源 | 資料集 | 取得形式 |
-|------|--------|---------|
-| 政府電子採購網 `web.pcc.gov.tw` | `pcc-tender`(衛福部轄下機關 · 資訊勞務,twinkle pcc-tender 欄位相容,含 enrich 的 `bid_deadline`/`open_date`/`budget`) | 半月公開 XML + 明細頁 enrich |
-| 健保署資料開放平台 `info.nhi.gov.tw` | `nhi-clinic`(健保特約診所) | CSV API,每日更新、免 key |
+- [Why](#why)
+- [How it works](#how-it-works)
+- [Install](#install)
+- [What it provides](#what-it-provides)
+- [Querying](#querying)
+- [Trust & security](#trust--security)
+- [HTTP & GKE](#http--gke)
+- [Development](#development)
+- [Scope & limits](#scope--limits)
+- [Related projects](#related-projects)
+- [License](#license)
 
-## 快速開始
+## Why
+
+AI agent 要查政府資料時，真正的摩擦通常不在模型，而在資料入口：來源分散、格式不同、欄位缺漏，而且外部聚合服務的政策或可用性可能改變。
+
+| Problem | What hcmcp does |
+|---|---|
+| 政府電子採購網與健保資料各自分散 | 以 `SourceAdapter` 統一 discover → fetch → normalize → upsert 流程 |
+| 半月 XML、CSV API、標案明細頁格式不同 | 正規化成可查詢的 dataset 與 schema |
+| 標案 open data 缺少截標、開標、預算 | 以 `get_tender_detail` 按需讀取官方明細頁補足資訊 |
+| 第三方資料入口不可控 | 自行同步、儲存與提供 MCP 介面 |
+
+## How it works
+
+```mermaid
+flowchart LR
+    PCC[政府電子採購網<br/>半月 XML] --> SYNC[hcmcp-sync<br/>fetch / normalize / upsert]
+    NHI[健保署開放平台<br/>CSV API] --> SYNC
+    SYNC --> DB[(SQLite<br/>~/.hcmcp/hcmcp.db)]
+    DB --> SERVER[hcmcp<br/>唯讀 MCP server]
+    SERVER --> AGENT[Claude / Agent]
+    AGENT -->|按需補查| DETAIL[get_tender_detail]
+    DETAIL --> PCCDETAIL[政府採購網<br/>標案明細頁]
+```
+
+The project keeps ingestion and querying separate:
+
+1. `hcmcp-sync` pulls official sources and writes the shared SQLite database.
+2. `hcmcp` opens the same database in the query path and exposes MCP tools.
+3. `list_datasets` → `get_dataset` → `query_rows` is the recommended discovery flow.
+4. `get_tender_detail` performs an on-demand lookup when a tender needs deadline, opening time, or budget details.
+
+## Install
 
 ```bash
-# 安裝
-git clone <repo-url> && cd healthcare-opendata-mcp
-python3.11 -m venv .venv && .venv/bin/pip install -e .
+git clone https://github.com/trionnemesis/healthcare-opendata-mcp.git
+cd healthcare-opendata-mcp
 
-# 同步資料(預設 ~/.hcmcp/hcmcp.db;決標 12 月、招標 12 月)
+python3.11 -m venv .venv
+.venv/bin/python -m pip install -e .
+
+# 建立或更新預設 DB：~/.hcmcp/hcmcp.db
 .venv/bin/hcmcp-sync
-
-# 加入 Claude Code
-claude mcp add hcmcp -- /path/to/.venv/bin/hcmcp
 ```
 
-> **單一 DB 預設**:`hcmcp-sync`(寫入)與 `hcmcp` server(讀取)共用同一預設
-> `~/.hcmcp/hcmcp.db`。要改位置時**兩者都要**設環境變數 `HCMCP_DB`(sync 亦可用 `--db`),
-> 否則會「sync 寫 A、server 讀 B → 同步了卻查不到」。
-
-HTTP 模式(團隊共用 / 容器部署,MCP streamable HTTP):
+加入 Claude Code：
 
 ```bash
-HCMCP_TRANSPORT=http HCMCP_PORT=8000 hcmcp
-# 連線:claude mcp add --transport http hcmcp http://<host>:8000/mcp
-# probe:GET /healthz
+claude mcp add hcmcp -- /absolute/path/to/healthcare-opendata-mcp/.venv/bin/hcmcp
 ```
 
-(`HCMCP_TRANSPORT=sse` 保留給既有部署相容;MCP spec 已 deprecate SSE,新部署用 http)
+### Database path
 
-GKE 部署(Dockerfile + K8s manifests):見 [deploy/README.md](deploy/README.md)。
+`hcmcp-sync` 與 `hcmcp` server 共用同一個預設 DB：`~/.hcmcp/hcmcp.db`。如果要改路徑，兩個 process 都必須使用相同的 `HCMCP_DB`；sync 也可以使用 `--db`：
 
-## MCP 工具
+```bash
+HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp-sync
+HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp
+```
 
-| 工具 | 說明 |
-|------|------|
-| `list_datasets` | 列出可查詢資料集 |
-| `get_dataset(dataset_id, sample_rows)` | metadata + schema + 抽樣資料列 |
-| `query_rows(dataset_id, where, columns, group_by, order_by, limit)` | **SQL 式查詢與聚合**(對齊 twinkle) |
-| `search_records(keyword, dataset_id)` | 跨資料集關鍵字搜尋 |
-| `get_record(dataset_id, natural_key)` | 取單筆完整資料 |
-| `get_tender_detail(job_number)` | 即時抓 web.pcc 標案明細,補半月 open data 缺的**截標/開標/預算**(招標評估用) |
-| `list_sources` | 列出資料來源與最後抓取時間 |
+否則可能出現「同步成功，但 server 查不到資料」的路徑漂移問題。
 
-`query_rows` 範例(twinkle 查詢模式直接沿用):
+## What it provides
+
+### Datasets
+
+目前 CLI 預設同步兩個資料集：
+
+| Dataset | Scope | Official source | Update path |
+|---|---|---|---|
+| `pcc-tender` | 衛生福利部轄下機關的資訊勞務相關標案 | [政府電子採購網](https://web.pcc.gov.tw/) | 半月 XML；明細欄位按需 enrich |
+| `nhi-clinic` | 健保特約醫事機構－診所 | [健保署資料開放平台](https://info.nhi.gov.tw/) | CSV API，每日更新 |
+
+### MCP tools
+
+| Tool | Purpose |
+|---|---|
+| `list_sources` | 列出資料來源、取得策略與最後抓取時間 |
+| `list_datasets` | 列出可查詢資料集與欄位 |
+| `get_dataset` | 取得 dataset metadata、schema 與可選的抽樣資料列 |
+| `query_rows` | 對單一 dataset 做 SELECT-only 篩選、排序與聚合 |
+| `search_records` | 跨資料集關鍵字搜尋 |
+| `get_record` | 以 `(dataset_id, natural_key)` 取得單筆完整資料 |
+| `get_vendor_stats` | 依得標次數與金額整理廠商排名 |
+| `get_tender_detail` | 即時取得標案明細的截標、開標、預算與採購屬性 |
+
+## Querying
+
+先看資料集與 schema，再執行查詢：
+
+```python
+list_datasets()
+get_dataset(dataset_id="pcc-tender", sample_rows=5)
+```
+
+`query_rows` 保留 Twinkle 相容的 SQL-style 查詢介面，支援欄位選取、`WHERE`、`GROUP BY`、排序與聚合：
 
 ```python
 query_rows(
-    dataset_id="pcc-tender-mohw",
-    columns=["agency", "COUNT(*) AS n", "SUM(CAST(award_price AS INTEGER)) AS total"],
+    dataset_id="pcc-tender",
+    columns=[
+        "agency",
+        "COUNT(*) AS n",
+        "SUM(CAST(award_price AS INTEGER)) AS total",
+    ],
     where="announcement_type='決標公告' AND date >= '2025-01-01'",
     group_by=["agency"],
     order_by="total DESC",
+    limit=50,
 )
 ```
 
-### SQL 安全(OWASP A03)
+SQLite 使用 `LIKE`，不使用 PostgreSQL 的 `ILIKE`；金額欄位需要依資料內容使用 `CAST(... AS INTEGER)`。
 
-`query_rows` 接受原始 SQL 片段,以雙層防禦保護:
+## Trust & security
 
-1. **語法層**(`query_guard`):僅單一 SELECT;拒絕 `;` 多語句、註解、PRAGMA/ATTACH/DML/DDL;limit 硬上限 400
-2. **執行層**(`query_executor`):`mode=ro` 唯讀連線 + sqlite authorizer 白名單(僅允許讀單一物化表,跨表子查詢一律拒絕)+ VM 步數上限
+`query_rows` 接受 SQL 片段，因此實作了兩層防禦：
 
-## 架構
+- **語法層**：只允許單一 `SELECT`；拒絕多語句、註解、`PRAGMA`、`ATTACH`、DML、DDL 與危險 keyword，並將 limit 硬上限設為 400。
+- **執行層**：使用 SQLite read-only connection 與 authorizer allowlist，只允許讀取單一物化資料表；另有 VM 步數上限。
 
-```
-src/health_opendata_mcp/
-├── contracts.py      跨層 DTO、Enum、Protocol(DI 邊界)
-├── domain/           query_guard(SQL 安全驗證純函式)
-├── adapters/         SourceAdapter 實作(可插拔多來源)
-│   ├── nhi.py            健保署 CSV API
-│   ├── pcc_tender.py     PCC 半月 XML(vendored 解析純函式)
-│   └── _http.py          共用 async HTTP getter(DI 預設值)
-├── ingestion/        pipeline(discover→fetch→normalize→upsert,容錯)
-├── repository/       SQLite 基底表 + ds_{dataset_id} 物化表 + 唯讀 executor
-└── mcp_server/       FastMCP 6 工具 + QueryService
+這是查詢執行安全邊界，不是使用者認證層。MCP server 本身沒有 authentication；HTTP/GKE 部署應放在內部網路，或在前方配置 IAP、service mesh mTLS 等存取控制。
 
-spec/
-├── erm.dbml          領域模型(DataSource/Dataset/Record/IngestionRun + 不變量)
-└── features/         Gherkin BDD 行為規格(5 features)
-```
+## HTTP & GKE
 
-**資料流**:`hcmcp-sync`(ETL,可排程)→ SQLite(records 正準 + 物化查詢表同交易)→ `hcmcp`(唯讀 MCP server)→ Claude/Agent。抓取與查詢分離,headless browser 無必要場景(介面保留、預設停用)。
-
-**新增資料集**:健保署資料集只需在 `cli.py` 的 `NHI_DATASETS` 登錄 `rId`(從 data.gov.tw 對應資料集頁取得);新資料來源則實作 `SourceAdapter` Protocol(`discover/fetch/normalize` 三方法)。
-
-## 開發
+本機或容器可使用 MCP streamable HTTP：
 
 ```bash
-.venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest        # 75 tests
+HCMCP_TRANSPORT=http HCMCP_PORT=8000 .venv/bin/hcmcp
+
+curl http://localhost:8000/healthz
+# {"status":"ok"}
+
+claude mcp add --transport http hcmcp http://<host>:8000/mcp
 ```
 
-完整 SDD 規格(評估矩陣 / BDD / DDD / 架構 / Twinkle 功能對齊)維護於 Notion「醫療健保開放資料 MCP」條目。
+`HCMCP_TRANSPORT=sse` 僅保留給既有部署相容；新網路部署使用 `http`。GKE 架構、Workload Identity、CronJob、GCS DB artifact 與 Kubernetes manifests 請見 [deploy/README.md](deploy/README.md)。
 
-## 相關專案
+## Development
 
-[g0VMCP](https://github.com/trionnemesis/g0VMCP) — 衛福部標案的**生命週期/明細加值** MCP(招標→更正→決標狀態機、開標時間/預算 enrich)。兩專案刻意零耦合:hcmcp 提供 twinkle 相容的扁平列查詢,g0VMCP 提供深度標案情報;PCC XML 解析純函式 vendored 自 g0VMCP。
+```bash
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m pytest
+```
+
+主要程式分層如下：
+
+```text
+src/health_opendata_mcp/
+├── adapters/      官方來源 adapter 與 HTTP/CSV/PCC parser
+├── domain/        query_guard 等純函式安全規則
+├── ingestion/     discover → fetch → normalize → upsert pipeline
+├── repository/    SQLite schema、物化表與唯讀 query executor
+└── mcp_server/    FastMCP tools、transport 與 QueryService
+```
+
+新增健保資料集只需在 `cli.py` 的 `NHI_DATASETS` 登錄 `rId`；新增資料來源則實作 `SourceAdapter` 的 `discover`、`fetch`、`normalize`。
+
+## Scope & limits
+
+- 預設同步範圍刻意收斂為衛福部資訊勞務相關標案與健保診所，不是完整的政府採購或醫療資料目錄。
+- `get_tender_detail` 依賴政府電子採購網即時明細頁；舊案下架、網站維護或限流時，工具可能回傳錯誤，應稍後重試。
+- HTTP server 預設沒有 authentication；公開暴露前必須自行配置網路層存取控制。
+- 資料依官方來源更新節奏而變動；本 repo 不把同步後的資料快照提交進 Git。
+
+## Related projects
+
+[g0VMCP](https://github.com/trionnemesis/g0VMCP) — 衛福部標案的生命週期與明細加值 MCP，處理招標 → 更正 → 決標狀態與深度標案情報。兩個專案刻意零耦合：本專案提供 Twinkle 相容的扁平列查詢，g0VMCP 提供深度標案資訊；PCC XML parser 以純函式方式 vendored 自 g0VMCP。
 
 ## License
 
-MIT — 資料依[政府資料開放授權條款](https://data.gov.tw/license)使用。
+[MIT](./LICENSE) — 資料依[政府資料開放授權條款](https://data.gov.tw/license)使用。
