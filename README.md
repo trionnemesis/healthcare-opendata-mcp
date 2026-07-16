@@ -2,6 +2,8 @@
 
 > 官方開放資料 → 可查詢 MCP 介面，讓 AI agent 不必直接處理分散的政府資料來源。
 
+Self-hosted MCP server that syncs Taiwan government procurement (PCC) and National Health Insurance (NHI) open data into a local SQLite database, then exposes it through read-only MCP tools. A SELECT-only query guard (syntax allowlist plus a read-only SQLite authorizer) keeps the Twinkle-compatible `query_rows` interface safe for agent-driven querying.
+
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastMCP](https://img.shields.io/badge/built%20with-FastMCP-orange)](https://github.com/jlowin/fastmcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -193,6 +195,8 @@ src/health_opendata_mcp/
 ## Related projects
 
 [g0VMCP](https://github.com/trionnemesis/g0VMCP) — 衛福部標案的生命週期與明細加值 MCP，處理招標 → 更正 → 決標狀態與深度標案情報。兩個專案刻意零耦合：本專案提供 Twinkle 相容的扁平列查詢，g0VMCP 提供深度標案資訊；PCC XML parser 以純函式方式 vendored 自 g0VMCP。
+
+[opendataCampus-MCP](https://github.com/trionnemesis/opendataCampus-MCP) — 教育資源導航 MCP，以 TWCampus 為目錄入口路由至台灣官方教育平台。與本專案同屬「官方開放資料 → 可查詢 MCP 介面」系列，但服務網域為教育資源而非採購／健保。
 
 ## License
 
