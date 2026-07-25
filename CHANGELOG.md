@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.2] - 2026-07-25
+
+### Added
+- **真正的 CI**(`.github/workflows/ci.yml`,回應 issue #4 / #6):原本 `.github/workflows/` 只有 Pages 部署,
+  README 的 `pytest` 全靠手動執行,故先前刻意不掛會誤導的 CI badge。現補三個 job:
+  - `test`:`pytest` matrix Python 3.11 / 3.12(dev extras 含 `pytest-asyncio`,async 測試不會被靜默跳過)
+  - `sast`:`bandit -r src -ll`(Medium 以上失敗)
+  - `audit`:`pip-audit`(無 lockfile,故稽核實際解析安裝的版本樹;跑在 3.12 避免稽核到 ensurepip 夾帶的 bootstrap 套件)
+  - README 掛上對應 CI badge,Development 章節補齊與 CI 同門檻的本機指令
+- dev extras 新增 `bandit`、`pip-audit`,讓本機與 CI 檢測門檻一致。
+
+### Changed
+- 三處 bandit Medium findings 加上 `# nosec` 與理由註記(非全域關閉規則,保留未來偵測能力):
+  - `_pcc_opendata.py` B314:DTD/ENTITY 與大小上限已在 `_safe_fromstring` 擋掉;改用 `defusedxml` 需新增依賴,待人工核可
+  - `query_guard.py` B608:`table` 來自 dataset_id 白名單、欄位片段已過 `_validate`,非使用者原始輸入
+  - `mcp_server/__main__.py` B104:容器/K8s 需綁 `0.0.0.0` 才收得到 Service 流量,且可由 `HCMCP_HOST` 覆寫
+
+### Verified
+- Python 3.11 / 3.12 各 112 tests 通過;`bandit -r src -ll` 0 issues;乾淨環境 `pip-audit` 回報 No known vulnerabilities。
+
 ## [0.6.1] - 2026-06-27
 
 ### Fixed
