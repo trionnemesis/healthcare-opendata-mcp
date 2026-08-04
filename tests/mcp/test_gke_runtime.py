@@ -23,16 +23,25 @@ def test_resolve_transport_http_reads_host_port():
     assert kwargs == {"host": "127.0.0.1", "port": 9000}
 
 
-def test_resolve_transport_http_defaults():
+def test_resolve_transport_http_defaults_to_loopback():
+    """未指定 HCMCP_HOST 時綁 loopback — server 無驗證層,預設不得對外曝露。"""
     transport, kwargs = resolve_transport({"HCMCP_TRANSPORT": "http"})
     assert transport == "http"
-    assert kwargs == {"host": "0.0.0.0", "port": 8000}
+    assert kwargs == {"host": "127.0.0.1", "port": 8000}
 
 
 def test_resolve_transport_sse_backcompat():
     transport, kwargs = resolve_transport({"HCMCP_TRANSPORT": "sse"})
     assert transport == "sse"
-    assert kwargs == {"host": "0.0.0.0", "port": 8000}
+    assert kwargs == {"host": "127.0.0.1", "port": 8000}
+
+
+def test_resolve_transport_honours_explicit_bind_all():
+    """容器/GKE 明確指定時仍須照辦(Dockerfile ENV 與 deployment.yaml 走此路徑)。"""
+    transport, kwargs = resolve_transport(
+        {"HCMCP_TRANSPORT": "http", "HCMCP_HOST": "0.0.0.0"}
+    )
+    assert kwargs["host"] == "0.0.0.0"
 
 
 async def test_healthz_returns_ok(tmp_path):

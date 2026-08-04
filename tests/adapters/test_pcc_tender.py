@@ -201,3 +201,60 @@ def test_rejects_xml_doctype_payload():
 
     with pytest.raises(ValueError):
         pcc.parse_tender_xml(xml)
+
+
+def test_rejects_doctype_pushed_past_prefix_window():
+    """DOCTYPE 被前置註解推擠出開頭視窗時仍須拒絕(CWE-611/776)。
+
+    修正前 _safe_fromstring 只掃描 xml[:1024];以 >1KB 的註解墊在前面即可讓
+    DOCTYPE 落在視窗外,payload 因而進入解析器並展開內部實體。
+    """
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    pad = "<!--" + "A" * 1200 + "-->"
+    xml = (
+        '<?xml version="1.0"?>' + pad + "<!DOCTYPE d ["
+        '<!ENTITY lol "lol">'
+        '<!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">'
+        '<!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;">'
+        "]><TENDER_LIST>&lol2;</TENDER_LIST>"
+    )
+    assert "<!doctype" not in xml[:1024].lower()  # 舊前綴檢查看不到它
+
+    with pytest.raises(ValueError):
+        pcc.parse_tender_xml(xml)
+
+
+def test_rejects_external_entity_pushed_past_prefix_window():
+    """外部實體宣告(XXE 形式)同樣須在解析器層被擋下。"""
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    pad = "<!--" + "A" * 1200 + "-->"
+    xml = (
+        '<?xml version="1.0"?>' + pad + "<!DOCTYPE f ["
+        '<!ENTITY xxe SYSTEM "file:///etc/passwd">'
+        "]><TENDER_LIST>&xxe;</TENDER_LIST>"
+    )
+
+    with pytest.raises(ValueError):
+        pcc.parse_award_xml(xml)
+
+
+def test_normal_tender_xml_still_parses():
+    """相容性:正常官方 XML 不受 defusedxml 影響。"""
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    xml = (
+        '<?xml version="1.0"?><TENDER_LIST><TENDER>'
+        "<TENDER_SPDT>2026/04/20</TENDER_SPDT>"
+        "<TENDER_ORG_NAME>衛生福利部</TENDER_ORG_NAME>"
+        "<TENDER_CASE_NO>T001</TENDER_CASE_NO>"
+        "<TENDER_NAME>資訊系統維護</TENDER_NAME>"
+        "<PROCUREMENT_TYPE>勞務</PROCUREMENT_TYPE>"
+        "<PROCUREMENT_ATTR></PROCUREMENT_ATTR>"
+        "</TENDER></TENDER_LIST>"
+    )
+    rows = pcc.parse_tender_xml(xml)
+    assert len(rows) == 1
+    assert rows[0].case_no == "T001"
+    assert rows[0].org_name == "衛生福利部"

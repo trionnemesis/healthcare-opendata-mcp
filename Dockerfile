@@ -11,8 +11,11 @@ RUN pip install --no-cache-dir . \
 USER 10001
 
 # GKE 預設:streamable HTTP + DB 掛載於 /data(emptyDir / volume)
+# HCMCP_HOST 在此明確設定:程式碼預設為 127.0.0.1(本機安全),容器內需綁
+# 0.0.0.0 才能讓 kubelet probe 與 Service 連到 pod。
 ENV HCMCP_TRANSPORT=http \
     HCMCP_DB=/data/hcmcp.db \
+    HCMCP_HOST=0.0.0.0 \
     HCMCP_PORT=8000
 
 EXPOSE 8000

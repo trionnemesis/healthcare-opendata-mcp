@@ -8,7 +8,8 @@ Vendored from g0VMCP `src/g0vmcp/ingestion/opendata.py`(MIT)— 兩專案
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
+import defusedxml
+import defusedxml.ElementTree as ET
 from dataclasses import dataclass
 
 _DOWNLOAD_BASE = "https://web.pcc.gov.tw/tps/tp/OpenData/downloadFile"
@@ -44,13 +45,17 @@ class AwardRow:
 
 
 def _safe_fromstring(xml: str) -> ET.Element:
-    """解析官方 XML 前套用基本資源護欄,拒絕 DTD/ENTITY 與過大輸入。"""
+    """解析官方 XML 前套用資源護欄,拒絕 DTD/ENTITY 與過大輸入(CWE-611/776)。
+
+    DTD 偵測交給 defusedxml 在 parser 層做,不再掃描字串開頭 1024 字元 —
+    該做法可被前置註解或空白推擠 DOCTYPE 到視窗外而繞過。
+    """
     if len(xml) > _MAX_XML_CHARS:
         raise ValueError("PCC XML 超過安全解析大小上限")
-    prefix = xml[:1024].lower()
-    if "<!doctype" in prefix or "<!entity" in prefix:
-        raise ValueError("PCC XML 含 DTD/ENTITY,已拒絕解析")
-    return ET.fromstring(xml)
+    try:
+        return ET.fromstring(xml)
+    except defusedxml.DefusedXmlException as exc:
+        raise ValueError("PCC XML 含 DTD/ENTITY,已拒絕解析") from exc
 
 
 def _text(node: ET.Element, tag: str) -> str:
