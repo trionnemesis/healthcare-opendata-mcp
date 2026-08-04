@@ -38,6 +38,9 @@ spec:
               value: "http"
             - name: HCMCP_DB
               value: /data/hcmcp.db
+            # 程式碼預設綁 127.0.0.1;pod 需對外綁定才能被 Service/probe 連到
+            - name: HCMCP_HOST
+              value: "0.0.0.0"
             - name: HCMCP_PORT
               value: "8000"
           ports:

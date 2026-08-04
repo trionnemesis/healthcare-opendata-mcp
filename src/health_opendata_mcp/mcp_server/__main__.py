@@ -27,11 +27,15 @@ def resolve_transport(env: Mapping[str, str]) -> tuple[str, dict]:
 
     sse 保留為既有部署相容;新網路部署(GKE)一律用 http(streamable,
     stateless 可多 replica 水平擴展)。
+
+    host 預設 127.0.0.1:此 server 無驗證授權層,綁 0.0.0.0 會讓開發機上
+    一句 HCMCP_TRANSPORT=http 就把查詢介面曝露到整個區網。容器部署需要
+    對外綁定時明確以 HCMCP_HOST 指定(image 的 ENV 已代為設定)。
     """
     transport = env.get("HCMCP_TRANSPORT", "stdio")
     if transport in ("http", "sse"):
         return transport, {
-            "host": env.get("HCMCP_HOST", "0.0.0.0"),
+            "host": env.get("HCMCP_HOST", "127.0.0.1"),
             "port": int(env.get("HCMCP_PORT", "8000")),
         }
     return "stdio", {}
