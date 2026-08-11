@@ -8,8 +8,10 @@ Vendored from g0VMCP `src/g0vmcp/ingestion/opendata.py`(MIT)— 兩專案
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+
+import defusedxml
+import defusedxml.ElementTree as ET
 
 _DOWNLOAD_BASE = "https://web.pcc.gov.tw/tps/tp/OpenData/downloadFile"
 _MAX_XML_CHARS = 20_000_000
@@ -44,13 +46,19 @@ class AwardRow:
 
 
 def _safe_fromstring(xml: str) -> ET.Element:
-    """解析官方 XML 前套用基本資源護欄,拒絕 DTD/ENTITY 與過大輸入。"""
+    """解析官方 XML 前套用資源護欄,拒絕 DTD/ENTITY 與過大輸入(CWE-611/776)。
+
+    改用 defusedxml 由解析器層攔截 DTD/ENTITY,與上游 g0VMCP 一致。
+    先前以 xml[:1024] 掃描 `<!doctype`/`<!entity` 的字串前綴檢查可被繞過 ——
+    XML prolog 允許註解,只要在 DOCTYPE 前塞 >1KB 註解即可躲過檢查,
+    随後 ElementTree 仍會展開內部實體(billion laughs 放大)。
+    """
     if len(xml) > _MAX_XML_CHARS:
         raise ValueError("PCC XML 超過安全解析大小上限")
-    prefix = xml[:1024].lower()
-    if "<!doctype" in prefix or "<!entity" in prefix:
-        raise ValueError("PCC XML 含 DTD/ENTITY,已拒絕解析")
-    return ET.fromstring(xml)
+    try:
+        return ET.fromstring(xml)
+    except defusedxml.DefusedXmlException as exc:
+        raise ValueError("PCC XML 含 DTD/ENTITY,已拒絕解析") from exc
 
 
 def _text(node: ET.Element, tag: str) -> str:
