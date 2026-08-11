@@ -9,9 +9,15 @@ Vendored from g0VMCP `src/g0vmcp/ingestion/opendata.py`(MIT)— 兩專案
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import defusedxml
 import defusedxml.ElementTree as ET
+
+if TYPE_CHECKING:
+    # 僅供型別註解:defusedxml 的 stubs 未 re-export Element,但它回傳的
+    # 就是 stdlib 的 Element。執行期不 import stdlib parser(解析一律走 defusedxml)。
+    from xml.etree.ElementTree import Element
 
 _DOWNLOAD_BASE = "https://web.pcc.gov.tw/tps/tp/OpenData/downloadFile"
 _MAX_XML_CHARS = 20_000_000
@@ -45,7 +51,7 @@ class AwardRow:
     winners: tuple[str, ...]
 
 
-def _safe_fromstring(xml: str) -> ET.Element:
+def _safe_fromstring(xml: str) -> Element:
     """解析官方 XML 前套用資源護欄,拒絕 DTD/ENTITY 與過大輸入(CWE-611/776)。
 
     改用 defusedxml 由解析器層攔截 DTD/ENTITY,與上游 g0VMCP 一致。
@@ -61,7 +67,7 @@ def _safe_fromstring(xml: str) -> ET.Element:
         raise ValueError("PCC XML 含 DTD/ENTITY,已拒絕解析") from exc
 
 
-def _text(node: ET.Element, tag: str) -> str:
+def _text(node: Element, tag: str) -> str:
     """缺欄位 / 空內容一律回空字串(容錯)。"""
     child = node.find(tag)
     if child is None or child.text is None:
