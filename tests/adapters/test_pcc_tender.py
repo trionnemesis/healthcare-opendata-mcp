@@ -203,6 +203,16 @@ def test_rejects_xml_doctype_payload():
         pcc.parse_tender_xml(xml)
 
 
+def test_rejects_xml_doctype_without_entity_declaration():
+    """純 DTD 也須維持既有的拒絕契約，不只阻擋實體宣告。"""
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    xml = """<!DOCTYPE TENDER_LIST><TENDER_LIST />"""
+
+    with pytest.raises(ValueError):
+        pcc.parse_tender_xml(xml)
+
+
 def test_rejects_doctype_hidden_behind_prolog_comment():
     """DOCTYPE 被 prolog 註解推離開頭時仍須拒絕(CWE-776 billion laughs)。
 

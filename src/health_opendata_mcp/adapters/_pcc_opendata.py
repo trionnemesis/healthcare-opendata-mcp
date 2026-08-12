@@ -62,7 +62,7 @@ def _safe_fromstring(xml: str) -> Element:
     if len(xml) > _MAX_XML_CHARS:
         raise ValueError("PCC XML 超過安全解析大小上限")
     try:
-        return ET.fromstring(xml)
+        return ET.fromstring(xml, forbid_dtd=True)
     except defusedxml.DefusedXmlException as exc:
         raise ValueError("PCC XML 含 DTD/ENTITY,已拒絕解析") from exc
 
