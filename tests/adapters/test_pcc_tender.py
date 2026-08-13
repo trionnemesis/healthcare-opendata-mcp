@@ -201,3 +201,58 @@ def test_rejects_xml_doctype_payload():
 
     with pytest.raises(ValueError):
         pcc.parse_tender_xml(xml)
+
+
+def test_rejects_xml_doctype_without_entity_declaration():
+    """純 DTD 也須維持既有的拒絕契約，不只阻擋實體宣告。"""
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    xml = """<!DOCTYPE TENDER_LIST><TENDER_LIST />"""
+
+    with pytest.raises(ValueError):
+        pcc.parse_tender_xml(xml)
+
+
+def test_rejects_doctype_hidden_behind_prolog_comment():
+    """DOCTYPE 被 prolog 註解推離開頭時仍須拒絕(CWE-776 billion laughs)。
+
+    舊的 xml[:1024] 前綴字串檢查在此情境下會放行,實體隨後被展開
+    (1.5KB 輸入 → 100KB 文字,放大 65 倍)。
+    """
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    padding = "<!--" + "x" * 1200 + "-->"
+    xml = (
+        f'<?xml version="1.0"?>{padding}<!DOCTYPE TENDER_LIST ['
+        ' <!ENTITY a "AAAAAAAAAA">'
+        ' <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">'
+        ' <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">'
+        ']><TENDER_LIST><TENDER><TENDER_NAME>&c;</TENDER_NAME></TENDER></TENDER_LIST>'
+    )
+    assert "<!doctype" not in xml[:1024].lower()  # 舊前綴檢查看不到 DOCTYPE
+
+    with pytest.raises(ValueError):
+        pcc.parse_tender_xml(xml)
+
+
+def test_rejects_award_xml_doctype_hidden_behind_prolog_comment():
+    """parse_award_xml 走同一 _safe_fromstring,護欄須一致生效。"""
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    padding = "<!--" + "x" * 1200 + "-->"
+    xml = (
+        f'<?xml version="1.0"?>{padding}'
+        '<!DOCTYPE TENDER_LIST [<!ENTITY boom "boom">]>'
+        "<TENDER_LIST><TENDER><TENDER_NAME>&boom;</TENDER_NAME></TENDER></TENDER_LIST>"
+    )
+
+    with pytest.raises(ValueError):
+        pcc.parse_award_xml(xml)
+
+
+def test_valid_xml_without_dtd_still_parses():
+    """護欄不得誤殺正常官方 XML(相容性回歸)。"""
+    from health_opendata_mcp.adapters import _pcc_opendata as pcc
+
+    rows = pcc.parse_tender_xml(_TENDER_XML)
+    assert rows and rows[0].case_no
