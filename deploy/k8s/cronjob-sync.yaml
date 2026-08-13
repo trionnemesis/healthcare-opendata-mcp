@@ -21,10 +21,17 @@ spec:
             runAsNonRoot: true
             runAsUser: 10001
             fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
           initContainers:
             - name: sync
               image: REGISTRY/hcmcp:latest
               command: ["hcmcp-sync"]
+              # 容器層最小權限:ETL 只需網路取檔 + 寫 emptyDir
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
               env:
                 - name: HCMCP_DB
                   value: /data/hcmcp.db
@@ -34,12 +41,20 @@ spec:
             - name: upload
               image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
               command: ["gcloud", "storage", "cp", "/data/hcmcp.db", "gs://HCMCP_BUCKET/hcmcp.db"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
               volumeMounts:
                 - name: db
                   mountPath: /data
           containers:
             - name: rollout
               image: bitnami/kubectl:latest
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
               command: ["kubectl", "rollout", "restart", "deployment/hcmcp"]
           volumes:
             - name: db

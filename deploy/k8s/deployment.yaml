@@ -23,16 +23,28 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: fetch-db
           image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
           command: ["gcloud", "storage", "cp", "gs://HCMCP_BUCKET/hcmcp.db", "/data/hcmcp.db"]
+          # 容器層最小權限:本容器只做 GCS 下載,不需提權或任何 capability
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: db
               mountPath: /data
       containers:
         - name: hcmcp
           image: REGISTRY/hcmcp:latest  # 替換為公司 Artifact Registry 路徑
+          # hcmcp 監聽 8000(>1024)故不需 NET_BIND_SERVICE;無 setuid 需求
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: HCMCP_TRANSPORT
               value: "http"
