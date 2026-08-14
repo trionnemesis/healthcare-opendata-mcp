@@ -4,6 +4,7 @@
 
 Self-hosted MCP server that syncs Taiwan government procurement (PCC) and National Health Insurance (NHI) open data into a local SQLite database, then exposes it through read-only MCP tools. A SELECT-only query guard (syntax allowlist plus a read-only SQLite authorizer) keeps the Twinkle-compatible `query_rows` interface safe for agent-driven querying.
 
+[![CI](https://github.com/trionnemesis/healthcare-opendata-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/trionnemesis/healthcare-opendata-mcp/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastMCP](https://img.shields.io/badge/built%20with-FastMCP-orange)](https://github.com/jlowin/fastmcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -170,7 +171,11 @@ claude mcp add --transport http hcmcp http://<host>:8000/mcp
 ```bash
 .venv/bin/python -m pip install -e ".[dev]"
 .venv/bin/python -m pytest
+.venv/bin/python -m bandit -r src -ll        # SAST，與 CI 同門檻（Medium 以上失敗）
+.venv/bin/python -m pip_audit --skip-editable # 依賴弱點掃描
 ```
+
+CI（`.github/workflows/ci.yml`）在 push 與 pull request 跑相同三項：pytest（Python 3.11 / 3.12）、bandit、pip-audit。
 
 主要程式分層如下：
 

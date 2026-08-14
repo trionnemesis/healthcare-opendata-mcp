@@ -31,7 +31,8 @@ def resolve_transport(env: Mapping[str, str]) -> tuple[str, dict]:
     transport = env.get("HCMCP_TRANSPORT", "stdio")
     if transport in ("http", "sse"):
         return transport, {
-            "host": env.get("HCMCP_HOST", "0.0.0.0"),
+            # 容器/K8s 內必須綁 0.0.0.0 才收得到 Service 流量;可用 HCMCP_HOST 覆寫
+            "host": env.get("HCMCP_HOST", "0.0.0.0"),  # nosec B104
             "port": int(env.get("HCMCP_PORT", "8000")),
         }
     return "stdio", {}
