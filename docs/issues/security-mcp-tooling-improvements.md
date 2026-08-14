@@ -23,9 +23,9 @@
 
 ## 後續建議
 
-- [ ] 在 CI 固定安裝 `pytest-asyncio` 並跑完整 async test matrix（Python 3.11 / 3.12）。
-- [ ] 在 CI 新增 SAST：`bandit -r src`。
-- [ ] 在 CI 新增依賴弱點掃描：`pip-audit` 或 Dependabot。
+- [x] 在 CI 固定安裝 `pytest-asyncio` 並跑完整 async test matrix（Python 3.11 / 3.12）。
+- [x] 在 CI 新增 SAST：`bandit -r src -ll`（Medium 以上失敗；3 處 Medium 已加 `# nosec` 與理由）。
+- [x] 在 CI 新增依賴弱點掃描：`pip-audit`（無 lockfile，故稽核實際解析安裝的版本樹）。
 - [ ] 評估改用 `defusedxml` 解析 PCC XML；目前已先以 DTD/ENTITY 與大小上限做輕量護欄，若允許新增依賴可再強化。
 - [ ] 評估為 `search_records` 加上可設定的最小關鍵字長度（例如至少 2 個非空白字元），降低高頻模糊查詢負載。
 - [ ] 評估新增 MCP tool：`describe_query_syntax`，讓 agent 在查詢前可取得欄位型別、limit 上限、範例與安全限制，減少錯誤查詢。

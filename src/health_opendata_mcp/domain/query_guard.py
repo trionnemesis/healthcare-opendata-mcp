@@ -56,7 +56,8 @@ def build_select(
     SQL 的 LIMIT 為 effective_limit + 1,供 executor 偵測截斷。
     """
     cols = ", ".join(_validate(c, what="columns") for c in columns) if columns else "*"
-    parts = [f'SELECT {cols} FROM "{table}"']
+    # table 來自 dataset_id 白名單、cols 已過 _validate,非使用者原始輸入
+    parts = [f'SELECT {cols} FROM "{table}"']  # nosec B608
     if where:
         parts.append(f"WHERE {_validate(where, what='where')}")
     if group_by:
