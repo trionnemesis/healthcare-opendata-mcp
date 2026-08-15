@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.3] - 2026-08-14
+
+### Fixed
+- **`enrich_bid_deadline` 漏掉決標檢查**:module docstring 寫明處理「最近、尚未決標、值還空」的招標公告,
+  但 `_candidates()` 只檢查 `announcement_type='招標公告'`、`date>=threshold`、`bid_deadline` 為空、標題屬 IT 類,
+  從未比對同案是否已決標 —— 宣告的行為從一開始就沒被實作。
+  - 招標與決標在半月檔是兩筆獨立 record(共用 `job_number`/`case_no`),只看招標那筆看不出案子已結束
+  - 後果是額度排擠:明細頁逐案抓取受 `--limit` 與 `--throttle` 約束,已決標但欄位仍空的舊案會佔掉配額,
+    排擠仍可投標的新案 —— 而看板要顯示的正是後者的剩餘天數
+  - 修正:先掃出決標公告的 `job_number` 集合,再從招標候選中排除;`_TENDER` / `_AWARD` 提為常數
+    (與 `adapters/pcc_tender.py` 同值),進度訊息一併補上「未決標」
+
+### Changed
+- `pyproject.toml` 的 pytest `pythonpath` 加入 `scripts`,讓維運腳本可被測試 import(`scripts/` 不是 package)。
+
+### Verified
+- 新增 `tests/scripts/test_enrich_bid_deadline.py` 8 項(決標排除 4 + 既有四項條件與排序不回歸 4);
+  決標排除案例在修正前確實失敗(`['A-1'] != []`)、修正後通過,其餘 7 項前後皆過。
+- 全套件 124 tests 通過;`bandit -r src -ll` 0 Medium;`pip-audit` 無弱點。
+
 ## [0.6.2] - 2026-07-25
 
 ### Added
@@ -12,10 +32,11 @@
 - dev extras 新增 `bandit`、`pip-audit`,讓本機與 CI 檢測門檻一致。
 
 ### Changed
-- 三處 bandit Medium findings 加上 `# nosec` 與理由註記(非全域關閉規則,保留未來偵測能力):
-  - `_pcc_opendata.py` B314:DTD/ENTITY 與大小上限已在 `_safe_fromstring` 擋掉;改用 `defusedxml` 需新增依賴,待人工核可
+- 兩處 bandit Medium findings 加上 `# nosec` 與理由註記(非全域關閉規則,保留未來偵測能力):
   - `query_guard.py` B608:`table` 來自 dataset_id 白名單、欄位片段已過 `_validate`,非使用者原始輸入
   - `mcp_server/__main__.py` B104:容器/K8s 需綁 `0.0.0.0` 才收得到 Service 流量,且可由 `HCMCP_HOST` 覆寫
+  - (原本還有第三處 `_pcc_opendata.py` B314「待人工核可 defusedxml」的 `# nosec`;合併 master 時
+    採用已在 `ae72bb9` 落地的 `defusedxml`,B314 不再觸發,該註記隨之移除 —— 此處補正實際落地內容)
 
 ### Verified
 - Python 3.11 / 3.12 各 112 tests 通過;`bandit -r src -ll` 0 issues;乾淨環境 `pip-audit` 回報 No known vulnerabilities。
