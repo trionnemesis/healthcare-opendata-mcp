@@ -5,16 +5,19 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Awaitable, Callable
 
 from health_opendata_mcp.adapters._csv import normalize_csv
 from health_opendata_mcp.adapters._http import default_http_get
+from health_opendata_mcp.adapters.nhi_facility import classify_healthcare_facility
 from health_opendata_mcp.contracts import (
     AccessStrategy,
+    ColumnSpec,
     DatasetMeta,
     NormalizedBatch,
     RawPayload,
+    Record,
     ResourceRef,
 )
 
@@ -72,3 +75,66 @@ class NhiApiAdapter:
 
     def normalize(self, raw: RawPayload) -> NormalizedBatch:
         return normalize_csv(raw, tuple(raw.ref.meta["natural_key_columns"]))
+
+
+class NhiHealthcareFacilityAdapter(NhiApiAdapter):
+    """專責：健保統一院所名冊，輸出衍生欄位並做需求 scope 篩選。"""
+
+    _REQUIRED_FIELDS = frozenset({
+        "醫事機構代碼",
+        "權屬別名稱",
+        "醫事機構名稱",
+        "特約類別",
+        "終止合約或歇業日期",
+    })
+    _DERIVED_FIELDS = (
+        "facility_type",
+        "governing_level",
+        "classification_source",
+        "is_active",
+    )
+
+    def normalize(self, raw: RawPayload) -> NormalizedBatch:
+        batch = normalize_csv(raw, tuple(raw.ref.meta["natural_key_columns"]))
+        field_names = {column.name for column in batch.dataset.columns}
+        missing = self._REQUIRED_FIELDS - field_names
+        if missing:
+            missing_list = ", ".join(sorted(missing))
+            raise ValueError(f"健保院所名冊 schema drift，缺少欄位: {missing_list}")
+        if not batch.records:
+            raise ValueError("健保院所名冊沒有可識別的資料列")
+
+        enriched_records: dict[str, Record] = {}
+        for rec in batch.records:
+            classified = classify_healthcare_facility(rec.payload)
+            if classified is None:
+                continue
+            payload = dict(rec.payload)
+            payload.update(
+                {
+                    "facility_type": classified.facility_type,
+                    "governing_level": classified.governing_level,
+                    "classification_source": classified.classification_source,
+                    "is_active": classified.is_active,
+                }
+            )
+            enriched_records[rec.natural_key] = Record(
+                dataset_id=rec.dataset_id,
+                natural_key=rec.natural_key,
+                payload=payload,
+            )
+
+        if not enriched_records:
+            raise ValueError("健保院所名冊沒有符合需求範圍的資料列")
+
+        columns = (
+            *batch.dataset.columns,
+            ColumnSpec("facility_type"),
+            ColumnSpec("governing_level"),
+            ColumnSpec("classification_source"),
+            ColumnSpec("is_active", "INTEGER"),
+        )
+        return NormalizedBatch(
+            dataset=replace(batch.dataset, columns=columns),
+            records=tuple(enriched_records.values()),
+        )
