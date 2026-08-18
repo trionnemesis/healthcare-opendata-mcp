@@ -72,3 +72,42 @@ class TestEnricher:
         client = _FakeClient(search_html="x", status=429)
         with pytest.raises(BlockedError):
             await PccDetailEnricher(client).fetch_detail("X")
+
+
+class TestDetailUrlHostGuard:
+    """明細連結來自上游 HTML,不可成為任意對外請求的跳板(CWE-918)。"""
+
+    @pytest.mark.parametrize(
+        "href",
+        [
+            "https://attacker.example.com/readBulletion?x=1",  # 絕對 URL 換主機
+            "//attacker.example.com/readBulletion",  # protocol-relative
+            "http://web.pcc.gov.tw/tps/readBulletion",  # 同主機但降級 HTTP
+            "https://web.pcc.gov.tw.evil.com/readBulletion",  # 主機前綴混淆
+        ],
+    )
+    async def test_off_host_detail_link_is_rejected(self, href):
+        client = _FakeClient(search_html=f'<a href="{href}">明細</a>')
+        with pytest.raises(ValueError, match="非預期來源"):
+            await PccDetailEnricher(client).fetch_detail("A-1")
+        # 關鍵斷言:被拒的主機完全沒有被請求過
+        assert not any("attacker.example.com" in u for _, u in client.calls)
+
+    async def test_relative_detail_link_still_followed(self):
+        """相容性:正常的相對路徑行為與修正前相同。"""
+        client = _FakeClient(
+            search_html='<a href="/tps/tender/common/bulletion/readBulletion?pk=1">明細</a>',
+            detail_html="<html></html>",
+        )
+        await PccDetailEnricher(client).fetch_detail("A-1")
+        gets = [u for m, u in client.calls if m == "get"]
+        assert gets == ["https://web.pcc.gov.tw/tps/tender/common/bulletion/readBulletion?pk=1"]
+
+    async def test_absolute_same_host_link_still_followed(self):
+        """相容性:上游若給同主機的絕對 URL,仍照舊跟進。"""
+        url = "https://web.pcc.gov.tw/prkms/urlSelector/common/tpam?pk=NzEy"
+        client = _FakeClient(
+            search_html=f'<a href="{url}">明細</a>', detail_html="<html></html>"
+        )
+        await PccDetailEnricher(client).fetch_detail("A-1")
+        assert ("get", url) in client.calls
