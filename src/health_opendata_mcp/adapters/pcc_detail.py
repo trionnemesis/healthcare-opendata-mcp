@@ -29,6 +29,21 @@ _SEARCH_FORM = {
 _BLOCKED_STATUS = {403, 429}
 
 
+def _require_pcc_path(path: str, job_number: str) -> str:
+    """明細連結必須是錨定 _BASE 的相對路徑,否則拒絕(CWE-918)。
+
+    find_detail_path 的來源是遠端搜尋結果頁 HTML;若直接接受其中的絕對 URL,
+    上游頁面(或反射了 job_number 的內容)就能把本 client 導向任意主機。
+    與 g0VMCP fetcher._fetch_via_search 同一道護欄:
+    只收 `/` 開頭、不含 `//`(protocol-relative)與 `@`(userinfo)的路徑。
+    """
+    if not path.startswith("/") or "//" in path or "@" in path:
+        raise ValueError(
+            f"明細連結非 web.pcc 相對路徑,已拒絕存取: {job_number}"
+        )
+    return path
+
+
 @dataclass(frozen=True)
 class HttpResp:
     status_code: int
@@ -54,8 +69,7 @@ class PccDetailEnricher:
         path = detail.find_detail_path(search.text, job_number)
         if not path:
             return None
-        url = path if path.startswith("http") else f"{_BASE}{path}"
-        page = await self._get(url)
+        page = await self._get(_BASE + _require_pcc_path(path, job_number))
         return detail.extract_detail(page.text)
 
     async def _get(self, url: str) -> HttpResp:
