@@ -80,3 +80,51 @@ class TestQueryRows:
         result = await repo.query_rows("pcc-tender-mohw", limit=200)
         assert len(result.rows) == 3
         assert result.truncated is False
+
+
+class TestResourceLimits:
+    """安全回歸(CWE-770):步數上限擋不住「單步配置大量記憶體」的查詢。
+
+    query_rows 對外無認證(見 deploy/README.md),任何 client 都能送 where 片段;
+    `hex(zeroblob(2e8))` 只跑幾個 VM 步卻要 400MB,足以 OOMKill 512Mi 的 pod。
+    """
+
+    @pytest.mark.parametrize(
+        "where",
+        [
+            "length(hex(zeroblob(200000000))) > 0",
+            "length(hex(randomblob(200000000))) > 0",
+        ],
+    )
+    async def test_memory_bomb_denied(self, repo, where):
+        with pytest.raises(QueryDeniedError):
+            await repo.query_rows("pcc-tender-mohw", where=where)
+
+    async def test_oversized_printf_yields_null_not_allocation(self):
+        # printf 超限時 SQLite 回 NULL(不 raise);關鍵是「不配置」——
+        # 無上限時同一運算式要 200MB,設限後 SQLite 直接放棄組字串。
+        import sqlite3
+
+        from health_opendata_mcp.repository.query_executor import _apply_limits
+
+        conn = sqlite3.connect(":memory:")
+        _apply_limits(conn)
+        assert conn.execute("SELECT printf('%.200000000c', 65)").fetchone()[0] is None
+        conn.close()
+
+    async def test_oversized_like_pattern_denied(self, repo):
+        with pytest.raises(QueryDeniedError):
+            await repo.query_rows(
+                "pcc-tender-mohw", where="agency LIKE '" + "%_" * 5_000 + "'"
+            )
+
+    async def test_normal_queries_unaffected_by_limits(self, repo):
+        # 上限只針對異常規模;正常字串函式/聚合/LIKE 一律照常
+        result = await repo.query_rows(
+            "pcc-tender-mohw",
+            columns=["agency", "length(agency) AS n", "hex(agency) AS h"],
+            where="agency LIKE '衛生福利部%'",
+            order_by="agency",
+        )
+        assert len(result.rows) == 3
+        assert all(row[1] > 0 and row[2] for row in result.rows)
