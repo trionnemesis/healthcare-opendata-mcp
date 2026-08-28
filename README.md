@@ -79,7 +79,26 @@ python3.11 -m venv .venv
 claude mcp add hcmcp -- /absolute/path/to/healthcare-opendata-mcp/.venv/bin/hcmcp
 ```
 
-### Database path
+### Sync options
+
+```bash
+.venv/bin/hcmcp-sync --db /path/to/hcmcp.db --tender-months 12 --award-months 12
+```
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--db` | `HCMCP_DB` 或 `~/.hcmcp/hcmcp.db` | 寫入的 SQLite 路徑 |
+| `--tender-months` | `12` | 招標回溯月數（PCC 站上實際可回溯約 6 個月） |
+| `--award-months` | `12` | 決標回溯月數 |
+
+### Environment variables
+
+| Variable | Default | Used by | Purpose |
+|---|---|---|---|
+| `HCMCP_DB` | `~/.hcmcp/hcmcp.db` | sync + server | SQLite 路徑；兩個 process 必須一致 |
+| `HCMCP_TRANSPORT` | `stdio` | server | `stdio` / `http` / `sse`（僅相容既有部署） |
+| `HCMCP_HOST` | `0.0.0.0` | server（http/sse） | 監聽位址；server 無 authentication，公開網段請改綁內網位址並在前方配置存取控制 |
+| `HCMCP_PORT` | `8000` | server（http/sse） | 監聽 port |
 
 `hcmcp-sync` 與 `hcmcp` server 共用同一個預設 DB：`~/.hcmcp/hcmcp.db`。如果要改路徑，兩個 process 都必須使用相同的 `HCMCP_DB`；sync 也可以使用 `--db`：
 
@@ -88,7 +107,7 @@ HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp-sync
 HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp
 ```
 
-否則可能出現「同步成功，但 server 查不到資料」的路徑漂移問題。
+否則可能出現「同步成功，但 server 查不到資料」的路徑漂移問題。server 啟動時若 DB 沒有任何資料集會直接以錯誤訊息結束，提醒先跑 `hcmcp-sync`。
 
 ## What it provides
 
@@ -149,6 +168,8 @@ SQLite 使用 `LIKE`，不使用 PostgreSQL 的 `ILIKE`；金額欄位需要依�
 - **語法層**：只允許單一 `SELECT`；拒絕多語句、註解、`PRAGMA`、`ATTACH`、DML、DDL 與危險 keyword，並將 limit 硬上限設為 400。
 - **執行層**：使用 SQLite read-only connection 與 authorizer allowlist，只允許讀取單一物化資料表；另有 VM 步數上限。
 
+寫入路徑（sync）另有一層 ingestion 防禦：PCC 半月 XML 一律以 `defusedxml` 解析，DTD 與 entity 在 parser 層就被拒絕（CWE-611/776，不使用可被 padding 繞過的字串前綴檢查），並保留 20M 字元的輸入上限。
+
 這是查詢執行安全邊界，不是使用者認證層。MCP server 本身沒有 authentication；HTTP/GKE 部署應放在內部網路，或在前方配置 IAP、service mesh mTLS 等存取控制。
 
 ## HTTP & GKE
@@ -164,7 +185,9 @@ curl http://localhost:8000/healthz
 claude mcp add --transport http hcmcp http://<host>:8000/mcp
 ```
 
-`HCMCP_TRANSPORT=sse` 僅保留給既有部署相容；新網路部署使用 `http`。GKE 架構、Workload Identity、CronJob、GCS DB artifact 與 Kubernetes manifests 請見 [deploy/README.md](deploy/README.md)。
+`HCMCP_TRANSPORT=sse` 僅保留給既有部署相容；新網路部署使用 `http`。預設監聽 `0.0.0.0:8000`，容器外執行時可用 `HCMCP_HOST` 收斂綁定位址。
+
+GKE 架構、Workload Identity、CronJob、GCS DB artifact 與 Kubernetes manifests 請見 [deploy/README.md](deploy/README.md)。DB 以不可變唯讀 artifact 形式從 GCS 拉進各 pod 的 emptyDir，因此 replica 可自由水平擴展；manifests 依 Pod Security Standards *restricted* 設定 `runAsNonRoot`、`allowPrivilegeEscalation: false`、`capabilities.drop: ["ALL"]` 與 seccomp `RuntimeDefault`。
 
 ## Development
 
@@ -188,7 +211,19 @@ src/health_opendata_mcp/
 └── mcp_server/    FastMCP tools、transport 與 QueryService
 ```
 
-新增健保資料集只需在 `cli.py` 的 `NHI_DATASETS` 登錄 `rId`；新增資料來源則實作 `SourceAdapter` 的 `discover`、`fetch`、`normalize`。
+新增健保資料集只需在 `cli.py` 的 `NHI_DATASETS` 登錄 `rId`；新增資料來源則實作 `SourceAdapter` 的 `discover`、`fetch`、`normalize`。標案的資訊勞務主題篩選由 `cli.py` 的 `IT_INCLUDE` / `IT_EXCLUDE` 關鍵字決定。
+
+行為契約以 Gherkin 記錄在 `spec/features/`（ingestion、query-rows、query-tools、source-registration、headless-fallback），資料模型見 `spec/erm.dbml`。
+
+### Maintenance scripts
+
+| Script | Purpose |
+|---|---|
+| `scripts/enrich_bid_deadline.py` | 對近期、IT 類、尚未 enrich 的招標公告逐案補截標/開標/預算（限量 `--limit` + 節流 `--throttle`，被封鎖即停） |
+| `scripts/export_board_data.py` | 匯出看板用的 `data.js` 快照 |
+| `scripts/prune_local_db.py` | 清除超出目前同步範圍的舊資料（預設 dry-run，`--apply` 才寫入） |
+
+`enrich_bid_deadline.py` 的候選條件只看招標公告本身（`announcement_type='招標公告'`、`date` 在區間內、`bid_deadline` 為空、標題屬 IT 類），不比對同 `job_number` 是否已有決標記錄；已決標但欄位仍空的案子一樣會入列，會佔用有限的明細頁請求額度。要優先處理仍可投標的案子，請縮小 `--days` 或先確認決標狀態。
 
 ## Scope & limits
 
