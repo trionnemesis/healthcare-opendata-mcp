@@ -43,4 +43,5 @@ packages = ["src/health_opendata_mcp"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["src"]
+# scripts/ 不是 package,加進 pythonpath 才能在測試裡 import 維運腳本
+pythonpath = ["src", "scripts"]

@@ -219,11 +219,11 @@ src/health_opendata_mcp/
 
 | Script | Purpose |
 |---|---|
-| `scripts/enrich_bid_deadline.py` | 對近期、IT 類、尚未 enrich 的招標公告逐案補截標/開標/預算（限量 `--limit` + 節流 `--throttle`，被封鎖即停） |
+| `scripts/enrich_bid_deadline.py` | 對近期、IT 類、尚未 enrich 且尚未決標的招標公告逐案補截標/開標/預算（限量 `--limit` + 節流 `--throttle`，被封鎖即停） |
 | `scripts/export_board_data.py` | 匯出看板用的 `data.js` 快照 |
 | `scripts/prune_local_db.py` | 清除超出目前同步範圍的舊資料（預設 dry-run，`--apply` 才寫入） |
 
-`enrich_bid_deadline.py` 的候選條件只看招標公告本身（`announcement_type='招標公告'`、`date` 在區間內、`bid_deadline` 為空、標題屬 IT 類），不比對同 `job_number` 是否已有決標記錄；已決標但欄位仍空的案子一樣會入列，會佔用有限的明細頁請求額度。要優先處理仍可投標的案子，請縮小 `--days` 或先確認決標狀態。
+`enrich_bid_deadline.py` 的候選條件為：`announcement_type='招標公告'`、`date` 在區間內、`bid_deadline` 為空、標題屬 IT 類，且同 `job_number` 尚無決標公告。決標與招標是兩筆獨立 record，只看招標那筆看不出案子已結束，因此另行比對決標的 `job_number` 集合，避免已決標的舊案佔用有限的明細頁請求額度、排擠仍可投標的新案。
 
 ## Scope & limits
 

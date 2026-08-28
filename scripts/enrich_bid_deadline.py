@@ -19,6 +19,10 @@ from health_opendata_mcp.contracts import BlockedError, NormalizedBatch, Record
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
 _DATASET = "pcc-tender"
+# 與 adapters/pcc_tender.py 的 _TENDER / _AWARD 同值;半月招標檔與決標檔各自
+# 產生獨立 record,同一案的兩筆共用 job_number(case_no)。
+_TENDER = "招標公告"
+_AWARD = "決標公告"
 # 與看板 / 半月排程同步維護的 IT 收緊條件
 _IT_KW = ["資訊","系統","軟體","資安","網路","雲端","機房","數位","電腦","主機","資料庫","平台","伺服器","資通訊","程式","網站","鑑識","人工智慧","人工智能","ai整合","生成式"]
 _EXCLUDE_KW = ["手術","醫材","椎","核酸","x光","攝影","空調","離心機","灌溉","變電","鍋爐","燈光","微影","機械手臂","不純物","心血管","放射","定序","電車","輸送","供電","模控","儲能","冷氣","消防","交通控制","環境監測","循環氣體","銜接"]
@@ -30,11 +34,17 @@ def _is_it(title: str) -> bool:
 
 
 async def _candidates(repo: SqliteRepository, threshold: str) -> list[tuple[str, dict]]:
-    """回 (natural_key, payload) — 招標公告、date>=threshold、bid_deadline 空、IT 類。"""
+    """回 (natural_key, payload) — 招標公告、date>=threshold、bid_deadline 空、IT 類、尚未決標。
+
+    「尚未決標」以同 job_number 是否已有決標公告判定。決標與招標是兩筆獨立
+    record,只看招標那筆看不出案子已結束;少了這道過濾,已決標但欄位仍空的
+    舊案會混進候選,佔用 --limit 的明細頁請求額度,排擠仍可投標的新案。
+    """
     import aiosqlite
     import json
 
-    out: list[tuple[str, dict]] = []
+    tenders: list[tuple[str, dict]] = []
+    awarded: set[str] = set()
     async with aiosqlite.connect(repo._db_path) as db:  # noqa: SLF001
         cur = await db.execute(
             "SELECT natural_key, payload FROM records WHERE dataset_id = ?",
@@ -42,15 +52,25 @@ async def _candidates(repo: SqliteRepository, threshold: str) -> list[tuple[str,
         )
         for nk, payload_json in await cur.fetchall():
             p = json.loads(payload_json)
-            if p.get("announcement_type") != "招標公告":
-                continue
-            if (p.get("date") or "") < threshold:
-                continue
-            if (p.get("bid_deadline") or "").strip():
-                continue
-            if not _is_it(p.get("title", "")):
-                continue
-            out.append((nk, p))
+            ann = p.get("announcement_type")
+            if ann == _AWARD:
+                job = (p.get("job_number") or "").strip()
+                if job:
+                    awarded.add(job)
+            elif ann == _TENDER:
+                tenders.append((nk, p))
+
+    out: list[tuple[str, dict]] = []
+    for nk, p in tenders:
+        if (p.get("date") or "") < threshold:
+            continue
+        if (p.get("bid_deadline") or "").strip():
+            continue
+        if not _is_it(p.get("title", "")):
+            continue
+        if (p.get("job_number") or "").strip() in awarded:
+            continue
+        out.append((nk, p))
     out.sort(key=lambda x: x[1].get("date", ""), reverse=True)
     return out
 
@@ -66,7 +86,7 @@ async def _enrich(db_path: str, days: int, limit: int, throttle: float) -> int:
         return 1
     threshold = (date.today() - timedelta(days=days)).isoformat()
     cands = (await _candidates(repo, threshold))[:limit]
-    print(f"候選 {len(cands)} 案(招標公告 / date>={threshold} / IT / 未 enrich)")
+    print(f"候選 {len(cands)} 案(招標公告 / date>={threshold} / IT / 未 enrich / 未決標)")
 
     enricher = PccDetailEnricher(default_client())
     updated: list[Record] = []
