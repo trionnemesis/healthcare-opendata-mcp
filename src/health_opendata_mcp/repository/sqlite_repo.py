@@ -215,6 +215,18 @@ class SqliteRepository:
     async def sample_rows(self, dataset_id: str, n: int) -> QueryResult:
         return await self.query_rows(dataset_id, limit=n)
 
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """跳脫 LIKE 萬用字元,讓 keyword 一律以字面值比對(CWE-943)。
+
+        未跳脫時 keyword="%" 會命中每一筆 record、"_" 會命中任一字元,
+        使用者可藉此把「關鍵字搜尋」變成「全表傾印」(受 limit 上限約束,
+        但語意已被顛覆)。跳脫順序必須先處理反斜線,否則會二次跳脫。
+        """
+        return (
+            value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+
     async def search_records(
         self, keyword: str, dataset_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
@@ -224,9 +236,9 @@ class SqliteRepository:
         effective_limit = normalize_limit(limit)
         sql = (
             "SELECT dataset_id, natural_key, payload FROM records"
-            " WHERE payload LIKE ?"
+            " WHERE payload LIKE ? ESCAPE '\\'"
         )
-        params: list[Any] = [f"%{keyword}%"]
+        params: list[Any] = [f"%{self._escape_like(keyword)}%"]
         if dataset_id:
             sql += " AND dataset_id = ?"
             params.append(dataset_id)
