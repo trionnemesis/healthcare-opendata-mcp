@@ -7,7 +7,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from health_opendata_mcp.cli import default_db_path
+from health_opendata_mcp.cli import default_db_path, ensure_db_dir
 from health_opendata_mcp.mcp_server.server import build_server
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
@@ -42,7 +42,7 @@ def main() -> None:
     # 單一真實來源:default_db_path() 本就讀 HCMCP_DB(否則 ~/.hcmcp/hcmcp.db),
     # 與 hcmcp-sync 的 --db 預設同源,杜絕 server/sync 預設漂移(同步了卻查不到)。
     db_path = default_db_path()
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    ensure_db_dir(db_path)
     repo = SqliteRepository(db_path)
     asyncio.run(repo.init())
     error = asyncio.run(empty_db_error(repo, db_path))

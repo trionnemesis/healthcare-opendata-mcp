@@ -26,6 +26,23 @@ def default_db_path() -> str:
     )
 
 
+# DB 目錄權限的單一真實來源:sync(寫)與 server(讀)都經由此函式建目錄,
+# 兩處必須一致才有意義 —— 誰先跑就由誰決定權限。
+DB_DIR_MODE = 0o700
+
+
+def ensure_db_dir(db_path: str) -> Path:
+    """建立 DB 所在目錄,權限限制為 0o700 並回傳該目錄。
+
+    DB 目錄存放已抓取的開放資料與抓取軌跡;預設 umask 會讓它成為
+    0o755,多使用者主機上任何本機帳號都讀得到(CWE-276)。
+    已存在的目錄不改動權限,避免覆寫使用者刻意設定的部署權限。
+    """
+    parent = Path(db_path).parent
+    parent.mkdir(parents=True, exist_ok=True, mode=DB_DIR_MODE)
+    return parent
+
+
 # 診所(NHI 一級 API,約 24.5k 筆/每日更新);實查 2026-06-10 resource = D21004-009
 NHI_DATASETS = [
     NhiDatasetSpec(
@@ -50,7 +67,7 @@ IT_EXCLUDE = (
 
 
 async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    ensure_db_dir(db_path)
     repo = SqliteRepository(db_path)
     await repo.init()
     adapters = [
