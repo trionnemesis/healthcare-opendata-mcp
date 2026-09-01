@@ -13,12 +13,13 @@ Self-hosted MCP server that syncs Taiwan government procurement (PCC) and Nation
 
 專案保留 Twinkle Hub `query_rows` 的 SQL 式查詢模式，但資料來源、同步流程與儲存層都由本專案自行掌握，不依賴第三方聚合服務。
 
-[GitHub Pages 導覽](https://trionnemesis.github.io/healthcare-opendata-mcp/) · [GitHub repository](https://github.com/trionnemesis/healthcare-opendata-mcp)
+[GitHub Pages 導覽](https://trionnemesis.github.io/healthcare-opendata-mcp/) · [PCC 靜態資料看板](https://trionnemesis.github.io/healthcare-opendata-mcp/dashboard/) · [GitHub repository](https://github.com/trionnemesis/healthcare-opendata-mcp)
 
 ## Contents
 
 - [Why](#why)
 - [How it works](#how-it-works)
+- [Static data dashboard](#static-data-dashboard)
 - [Install](#install)
 - [What it provides](#what-it-provides)
 - [Querying](#querying)
@@ -59,6 +60,32 @@ The project keeps ingestion and querying separate:
 2. `hcmcp` opens the same database in the query path and exposes MCP tools.
 3. `list_datasets` → `get_dataset` → `query_rows` is the recommended discovery flow.
 4. `get_tender_detail` performs an on-demand lookup when a tender needs deadline, opening time, or budget details.
+
+## Static data dashboard
+
+[GitHub Pages 資料看板](https://trionnemesis.github.io/healthcare-opendata-mcp/dashboard/) 是 SQLite 的可重建、唯讀 projection。它讀取 build-time 產生的 `docs/data/current.json`，提供 PCC 摘要、搜尋、公告類型／機關／日期篩選、日期／預算／決標金額排序與固定 20 筆分頁；現有 landing page 仍保留為專案導覽。
+
+資料邊界：
+
+- `generated_at` 是 UTC 快照產生時間；`status.source_max_date` 才是 PCC 官方資料中的最新日期。
+- 狀態明確區分 `fresh`、`stale`、`degraded`、`empty`；JSON 無法載入或格式錯誤時，頁面顯示失敗而不呈現假成功。
+- P0 只發布 allowlist 中的 PCC 欄位。NHI 僅顯示筆數與最後同步 metadata，不發布電話、地址或全院所目錄。
+- 金額缺值維持 `null`，不轉為 0。完整 projection 先量測；超過 5 MiB 時只縮限明細列，仍保留全量聚合與明確的 export strategy。
+- 這是隨 repository 提交的靜態快照，P0 尚未自動同步；完整、即時或任意條件查詢仍使用 MCP／SQLite。
+
+從已成功同步的真實 DB 重建 snapshot 與預先渲染摘要：
+
+```bash
+.venv/bin/python scripts/export_board_data.py \
+  --db /path/to/hcmcp.db \
+  --out docs/data/current.json \
+  --template scripts/templates/dashboard.html \
+  --dashboard-out docs/dashboard/index.html
+
+.venv/bin/python scripts/verify_dashboard.py --site docs
+```
+
+快照契約見 [`docs/data/schema-v1.json`](docs/data/schema-v1.json)，設計與 P0/P1/P2 邊界見 [`docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md`](docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md)。
 
 ## Install
 
@@ -220,7 +247,8 @@ src/health_opendata_mcp/
 | Script | Purpose |
 |---|---|
 | `scripts/enrich_bid_deadline.py` | 對近期、IT 類、尚未 enrich 且尚未決標的招標公告逐案補截標/開標/預算（限量 `--limit` + 節流 `--throttle`，被封鎖即停） |
-| `scripts/export_board_data.py` | 匯出看板用的 `data.js` 快照 |
+| `scripts/export_board_data.py` | 從真實 SQLite 原子匯出 versioned `current.json` 與預渲染看板摘要；超過 5 MiB 時縮限明細 |
+| `scripts/verify_dashboard.py` | 在 Pages 上傳前驗證 snapshot schema、大小、安全 DOM 路徑、連結與 artifact 邊界 |
 | `scripts/prune_local_db.py` | 清除超出目前同步範圍的舊資料（預設 dry-run，`--apply` 才寫入） |
 
 `enrich_bid_deadline.py` 的候選條件為：`announcement_type='招標公告'`、`date` 在區間內、`bid_deadline` 為空、標題屬 IT 類，且同 `job_number` 尚無決標公告。決標與招標是兩筆獨立 record，只看招標那筆看不出案子已結束，因此另行比對決標的 `job_number` 集合，避免已決標的舊案佔用有限的明細頁請求額度、排擠仍可投標的新案。
@@ -229,8 +257,9 @@ src/health_opendata_mcp/
 
 - 預設同步範圍刻意收斂為衛福部資訊勞務相關標案與健保診所，不是完整的政府採購或醫療資料目錄。
 - `get_tender_detail` 依賴政府電子採購網即時明細頁；舊案下架、網站維護或限流時，工具可能回傳錯誤，應稍後重試。
+- GitHub Pages 看板是提交時的靜態 snapshot，不等於 MCP／SQLite 即時查詢；自動同步與 last-known-good 發布屬後續 P1。
 - HTTP server 預設沒有 authentication；公開暴露前必須自行配置網路層存取控制。
-- 資料依官方來源更新節奏而變動；本 repo 不把同步後的資料快照提交進 Git。
+- 資料依官方來源更新節奏而變動；repository 只提交經欄位 allowlist、大小門檻與驗證的 Pages snapshot，不提交 SQLite 或原始同步資料。
 
 ## Related projects
 

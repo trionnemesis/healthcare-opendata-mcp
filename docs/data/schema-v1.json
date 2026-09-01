@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trionnemesis.github.io/healthcare-opendata-mcp/data/schema-v1.json",
+  "title": "Healthcare OpenData MCP dashboard snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "datasets",
+    "summary",
+    "filters",
+    "export",
+    "rows"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "source_max_date", "message"],
+      "properties": {
+        "state": { "enum": ["fresh", "stale", "degraded", "empty"] },
+        "source_max_date": {
+          "anyOf": [
+            { "type": "string", "format": "date" },
+            { "type": "null" }
+          ]
+        },
+        "message": { "type": "string" }
+      }
+    },
+    "datasets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pcc_tender", "nhi_clinic"],
+      "properties": {
+        "pcc_tender": { "$ref": "#/$defs/dataset" },
+        "nhi_clinic": { "$ref": "#/$defs/dataset" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pcc_tender"],
+      "properties": {
+        "pcc_tender": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "snapshot_row_count",
+            "date_range",
+            "announcement_types",
+            "budget",
+            "award_amount"
+          ],
+          "properties": {
+            "snapshot_row_count": { "type": "integer", "minimum": 0 },
+            "date_range": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min", "max"],
+              "properties": {
+                "min": { "$ref": "#/$defs/nullableDate" },
+                "max": { "$ref": "#/$defs/nullableDate" }
+              }
+            },
+            "announcement_types": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "count"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "count": { "type": "integer", "minimum": 0 }
+                }
+              }
+            },
+            "budget": { "$ref": "#/$defs/amountSummary" },
+            "award_amount": { "$ref": "#/$defs/amountSummary" }
+          }
+        }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["announcement_types", "agencies"],
+      "properties": {
+        "announcement_types": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "agencies": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "max_bytes",
+        "detail_limit",
+        "full_row_count",
+        "full_payload_bytes",
+        "published_payload_bytes"
+      ],
+      "properties": {
+        "strategy": { "enum": ["all", "latest_records"] },
+        "max_bytes": { "type": "integer", "minimum": 1 },
+        "detail_limit": { "type": "integer", "minimum": 1 },
+        "full_row_count": { "type": "integer", "minimum": 0 },
+        "full_payload_bytes": { "type": "integer", "minimum": 0 },
+        "published_payload_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pccRow" }
+    }
+  },
+  "$defs": {
+    "nullableString": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }]
+    },
+    "nullableDate": {
+      "anyOf": [
+        { "type": "string", "format": "date" },
+        { "type": "null" }
+      ]
+    },
+    "nullableNumber": {
+      "anyOf": [{ "type": "number" }, { "type": "null" }]
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "row_count",
+        "last_fetched_at",
+        "source_url",
+        "license"
+      ],
+      "properties": {
+        "row_count": { "type": "integer", "minimum": 0 },
+        "last_fetched_at": { "$ref": "#/$defs/nullableString" },
+        "latest_run_status": { "$ref": "#/$defs/nullableString" },
+        "latest_run_finished_at": { "$ref": "#/$defs/nullableString" },
+        "source_url": { "type": "string", "format": "uri" },
+        "license": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "amountSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["known_count", "sum_twd"],
+      "properties": {
+        "known_count": { "type": "integer", "minimum": 0 },
+        "sum_twd": { "$ref": "#/$defs/nullableNumber" }
+      }
+    },
+    "pccRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "date",
+        "announcement_type",
+        "title",
+        "agency",
+        "job_number",
+        "bid_deadline",
+        "open_date",
+        "budget",
+        "award_price",
+        "companies"
+      ],
+      "properties": {
+        "date": { "$ref": "#/$defs/nullableDate" },
+        "announcement_type": { "$ref": "#/$defs/nullableString" },
+        "title": { "$ref": "#/$defs/nullableString" },
+        "agency": { "$ref": "#/$defs/nullableString" },
+        "job_number": { "$ref": "#/$defs/nullableString" },
+        "bid_deadline": { "$ref": "#/$defs/nullableString" },
+        "open_date": { "$ref": "#/$defs/nullableString" },
+        "budget": { "$ref": "#/$defs/nullableNumber" },
+        "award_price": { "$ref": "#/$defs/nullableNumber" },
+        "companies": { "$ref": "#/$defs/nullableString" }
+      }
+    }
+  }
+}

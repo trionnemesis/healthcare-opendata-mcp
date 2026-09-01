@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Healthcare OpenData MCP | 資料看板</title>
+  <meta name="description" content="Healthcare OpenData MCP 的 PCC 靜態資料快照、狀態與查詢看板。" />
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="../assets/dashboard.css" />
+  <script defer src="../assets/dashboard.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="topbar dashboard-topbar">
+    <a href="../">Healthcare OpenData MCP</a>
+    <nav aria-label="主要導覽">
+      <a href="../">專案導覽</a>
+      <a aria-current="page" href="./">資料看板</a>
+      <a href="https://github.com/trionnemesis/healthcare-opendata-mcp">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="dashboard-page" id="main">
+    <section class="dashboard-hero">
+      <p class="eyebrow">Read-only projection · schema v1.0</p>
+      <h1>醫療開放資料靜態看板</h1>
+      <p>
+        這是由本專案 SQLite 在建置時產生的唯讀快照，不是即時資料庫。
+        完整或任意條件查詢請使用 MCP；本頁不提供醫療建議或採購推薦。
+      </p>
+      <dl class="snapshot-meta">
+        <div><dt>快照產生時間</dt><dd id="generated-at">2026-09-01T07:34:44Z</dd></div>
+        <div><dt>官方資料最新日期</dt><dd id="source-max-date">2026-07-22</dd></div>
+        <div><dt>快照 schema</dt><dd id="schema-version">1.0</dd></div>
+      </dl>
+    </section>
+
+    <aside
+      class="data-status data-status--fresh"
+      id="data-status"
+      data-state="fresh"
+      role="status"
+      aria-live="polite"
+    >
+      <strong id="status-label">資料狀態：fresh</strong>
+      <span id="status-message">快照由最近一次成功同步的 PCC／NHI 資料庫重建；公告日期依目前資料範圍呈現。</span>
+    </aside>
+
+    <section class="dashboard-section" aria-labelledby="summary-heading">
+      <div class="section-head dashboard-heading">
+        <div>
+          <p class="eyebrow">Snapshot summary</p>
+          <h2 id="summary-heading">快照概況</h2>
+        </div>
+        <p>以下摘要直接寫入 HTML；即使 JavaScript 未執行仍可讀取。</p>
+      </div>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <span>PCC 資料庫總筆數</span>
+          <strong id="pcc-row-count">54</strong>
+          <small>目前資料庫中的穩定資料集</small>
+        </article>
+        <article class="kpi-card">
+          <span>本頁明細筆數</span>
+          <strong id="snapshot-row-count">54</strong>
+          <small id="date-range">涵蓋 2025-09-23 – 2026-07-22</small>
+        </article>
+        <article class="kpi-card">
+          <span>公告類型</span>
+          <strong class="kpi-text" id="announcement-summary">招標公告 23 · 決標公告 31</strong>
+          <small>以全量 PCC 資料聚合</small>
+        </article>
+        <article class="kpi-card">
+          <span>已知預算合計</span>
+          <strong id="budget-summary">無可用金額</strong>
+          <small><span id="budget-known-count">0</span> 筆有值；缺值不視為 0</small>
+        </article>
+        <article class="kpi-card">
+          <span>已知決標金額合計</span>
+          <strong id="award-summary">NT$ 398,360,780</strong>
+          <small><span id="award-known-count">31</span> 筆有值；缺值不視為 0</small>
+        </article>
+        <article class="kpi-card">
+          <span>NHI 診所資料筆數</span>
+          <strong id="nhi-row-count">24,736</strong>
+          <small>最後同步：<span id="nhi-fetched-at">2026-09-01T07:13:53.806110+00:00</span></small>
+        </article>
+      </div>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="records-heading">
+      <div class="section-head dashboard-heading">
+        <div>
+          <p class="eyebrow">PCC tender records</p>
+          <h2 id="records-heading">衛福部資訊勞務標案</h2>
+        </div>
+        <p id="result-count">載入快照後可搜尋、篩選、排序與分頁。</p>
+      </div>
+
+      <form class="filters" id="filters" aria-label="PCC 資料篩選">
+        <label>
+          <span>關鍵字</span>
+          <input disabled id="keyword" type="search" placeholder="標題、機關、案號、廠商" autocomplete="off" />
+        </label>
+        <label>
+          <span>公告類型</span>
+          <select disabled id="announcement-type"><option value="">全部類型</option></select>
+        </label>
+        <label>
+          <span>機關</span>
+          <select disabled id="agency"><option value="">全部機關</option></select>
+        </label>
+        <label>
+          <span>起始日期</span>
+          <input disabled id="date-from" type="date" />
+        </label>
+        <label>
+          <span>結束日期</span>
+          <input disabled id="date-to" type="date" />
+        </label>
+        <label>
+          <span>排序</span>
+          <select disabled id="sort-order">
+            <option value="date-desc">公告日期：新到舊</option>
+            <option value="date-asc">公告日期：舊到新</option>
+            <option value="budget-desc">預算：高到低</option>
+            <option value="award-desc">決標金額：高到低</option>
+          </select>
+        </label>
+        <button disabled class="btn btn-outline filter-reset" id="reset-filters" type="reset">清除篩選</button>
+      </form>
+
+      <div class="table-shell" tabindex="0" role="region" aria-label="PCC 標案明細，可水平捲動">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">公告日期</th>
+              <th scope="col">公告類型</th>
+              <th scope="col">標題</th>
+              <th scope="col">機關</th>
+              <th scope="col">案號</th>
+              <th scope="col">截止投標</th>
+              <th scope="col">開標日期</th>
+              <th scope="col">預算</th>
+              <th scope="col">決標金額</th>
+              <th scope="col">廠商</th>
+            </tr>
+          </thead>
+          <tbody id="records-body">
+            <tr><td colspan="10">明細互動需要 JavaScript；上方快照摘要仍可讀取。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination" aria-label="結果分頁">
+        <button disabled class="btn btn-outline" id="previous-page" type="button">上一頁</button>
+        <span id="page-status">第 1 頁</span>
+        <button disabled class="btn btn-outline" id="next-page" type="button">下一頁</button>
+      </div>
+      <noscript><p class="runtime-note">JavaScript 已停用，因此只顯示建置時摘要；完整查詢請使用 MCP。</p></noscript>
+    </section>
+
+    <section class="dashboard-section limitations" aria-labelledby="limits-heading">
+      <h2 id="limits-heading">資料邊界</h2>
+      <ul>
+        <li>Pages 只讀取 <code>data/current.json</code>；不執行 SQLite、MCP server 或任意 SQL。</li>
+        <li><code>generated_at</code> 是快照時間，<code>source_max_date</code> 才是 PCC 資料日期。</li>
+        <li>NHI 在 P0 只公開筆數與同步 metadata，不公開電話、地址或全院所目錄。</li>
+        <li>金額缺值維持未知，不會轉成 0；頁面內容不構成醫療或採購建議。</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <a href="../">返回專案導覽</a>
+    <span>Healthcare OpenData MCP · static snapshot</span>
+  </footer>
+</body>
+</html>
