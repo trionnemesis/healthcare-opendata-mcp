@@ -49,8 +49,9 @@ jobs:
         run: python -m pip install "bandit>=1.7"
 
       # -ll = 只讓 Medium 以上失敗;Low 噪音(assert、xml import)仍會列出供人工檢視
+      # scripts/ 一併掃描:維運腳本同樣碰 DB 與網路,先前不在掃描範圍內
       - name: Run bandit
-        run: python -m bandit -r src -ll
+        run: python -m bandit -r src scripts -ll
 
   audit:
     name: pip-audit (dependency vulnerabilities)

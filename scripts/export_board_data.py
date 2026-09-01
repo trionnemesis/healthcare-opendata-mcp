@@ -86,8 +86,10 @@ def export(db_path: str, out_path: str) -> int:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         cols = ", ".join(f'"{c}"' for c in COLUMNS)
+        # cols 完全來自本檔的 COLUMNS 常數、表名為字面值,無使用者輸入進入
+        # SQL 文字;連線亦為 mode=ro。bandit B608 在此為誤報。
         rows = con.execute(
-            f'SELECT {cols} FROM "ds_pcc_tender" ORDER BY "date" DESC'
+            f'SELECT {cols} FROM "ds_pcc_tender" ORDER BY "date" DESC'  # nosec B608
         ).fetchall()
         vendor_stats = _vendor_stats(con)
     finally:
