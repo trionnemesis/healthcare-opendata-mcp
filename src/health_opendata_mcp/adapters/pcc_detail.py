@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, urlparse
 
 from health_opendata_mcp.adapters import _pcc_detail as detail
 from health_opendata_mcp.contracts import BlockedError
 
 _BASE = "https://web.pcc.gov.tw"
+_BASE_HOST = urlparse(_BASE).hostname or ""
 _INDEX_URL = f"{_BASE}/prkms/tender/common/basic/indexTenderBasic"
 _SEARCH_URL = f"{_BASE}/prkms/tender/common/basic/readTenderBasic"
 _SEARCH_FORM = {
@@ -27,6 +28,25 @@ _SEARCH_FORM = {
     "dateType": "isDate",
 }
 _BLOCKED_STATUS = {403, 429}
+
+
+def _resolve_detail_url(path: str, job_number: str) -> str:
+    """把搜尋結果頁的明細連結解析成「必定落在 web.pcc.gov.tw」的絕對 URL。
+
+    明細連結取自上游回應的 HTML,屬不可信輸入。舊寫法 `path if
+    path.startswith("http") else _BASE + path` 會讓一個絕對 href 直接決定
+    請求目標 —— 連線帶著共用 cookie jar 且 follow_redirects=True,等於把
+    session 送往任意主機(CWE-918 SSRF)。改以 urljoin 正規化(相對路徑行為
+    不變),再比對 host 白名單;非 PCC 網域一律拒絕而非靜默改寫。
+    """
+    url = urljoin(_BASE + "/", path)
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or host != _BASE_HOST:
+        raise RuntimeError(
+            f"unexpected detail href for {job_number}: 明細連結必須指向 {_BASE_HOST}"
+        )
+    return url
 
 
 @dataclass(frozen=True)
@@ -54,7 +74,7 @@ class PccDetailEnricher:
         path = detail.find_detail_path(search.text, job_number)
         if not path:
             return None
-        url = path if path.startswith("http") else f"{_BASE}{path}"
+        url = _resolve_detail_url(path, job_number)
         page = await self._get(url)
         return detail.extract_detail(page.text)
 
