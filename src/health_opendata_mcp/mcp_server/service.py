@@ -29,6 +29,18 @@ def _result_dict(result: QueryResult) -> dict[str, Any]:
 
 
 class QueryService:
+    # MCP 工具參數的長度上限。這些字串會進到 LIKE pattern、外送表單與
+    # 錯誤訊息;不設限時單一呼叫即可送進 MB 級字串造成資源耗用(CWE-20/
+    # CWE-400)。上限遠大於任何真實案號/關鍵字,不影響正常查詢。
+    _MAX_KEYWORD_LEN = 200
+    _MAX_IDENT_LEN = 200
+
+    @classmethod
+    def _check_len(cls, value: str, *, name: str, max_len: int) -> str:
+        if len(value) > max_len:
+            raise ValueError(f"{name} too long ({len(value)} chars, max {max_len})")
+        return value
+
     def __init__(
         self, repo: SqliteRepository, enricher: PccDetailEnricher | None = None
     ) -> None:
@@ -112,9 +124,16 @@ class QueryService:
     async def search_records(
         self, keyword: str, dataset_id: str | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
+        self._check_len(keyword, name="keyword", max_len=self._MAX_KEYWORD_LEN)
+        if dataset_id is not None:
+            self._check_len(
+                dataset_id, name="dataset_id", max_len=self._MAX_IDENT_LEN
+            )
         return await self._repo.search_records(keyword, dataset_id, limit)
 
     async def get_record(self, dataset_id: str, natural_key: str) -> dict[str, Any]:
+        self._check_len(dataset_id, name="dataset_id", max_len=self._MAX_IDENT_LEN)
+        self._check_len(natural_key, name="natural_key", max_len=self._MAX_IDENT_LEN)
         rec = await self._repo.get_record(dataset_id, natural_key)
         if rec is None:
             raise ValueError(f"record 不存在: {dataset_id}/{natural_key}")
@@ -195,6 +214,7 @@ class QueryService:
         job_number = job_number.strip()
         if not job_number:
             raise ValueError("job_number 不可為空")
+        self._check_len(job_number, name="job_number", max_len=self._MAX_IDENT_LEN)
         if self._enricher is None:
             self._enricher = PccDetailEnricher(default_client())
         try:
