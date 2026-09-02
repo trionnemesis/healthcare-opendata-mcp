@@ -1,0 +1,726 @@
+{
+  "datasets": {
+    "nhi_clinic": {
+      "last_fetched_at": "2026-09-01T07:13:53.806110+00:00",
+      "latest_run_finished_at": "2026-09-01T07:13:55.939295+00:00",
+      "latest_run_status": "SUCCEEDED",
+      "license": "政府資料開放授權條款 1.0",
+      "row_count": 24736,
+      "source_url": "https://info.nhi.gov.tw/"
+    },
+    "pcc_tender": {
+      "last_fetched_at": "2026-09-01T07:23:58.747882+00:00",
+      "latest_run_finished_at": "2026-09-01T07:25:22.745091+00:00",
+      "latest_run_status": "SUCCEEDED",
+      "license": "政府資料開放授權條款 1.0",
+      "row_count": 54,
+      "source_url": "https://web.pcc.gov.tw/"
+    }
+  },
+  "export": {
+    "detail_limit": 1000,
+    "full_payload_bytes": 24339,
+    "full_row_count": 54,
+    "max_bytes": 5242880,
+    "published_payload_bytes": 24343,
+    "strategy": "all"
+  },
+  "filters": {
+    "agencies": [
+      "衛生福利部",
+      "衛生福利部中央健康保險署",
+      "衛生福利部國家中醫藥研究所",
+      "衛生福利部疾病管制署",
+      "衛生福利部社會及家庭署",
+      "衛生福利部食品藥物管理署"
+    ],
+    "announcement_types": [
+      "招標公告",
+      "決標公告"
+    ]
+  },
+  "generated_at": "2026-09-01T07:34:44Z",
+  "rows": [
+    {
+      "agency": "衛生福利部國家中醫藥研究所",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2026-07-22",
+      "job_number": "115-2-014",
+      "open_date": null,
+      "title": "500MHz核磁共振儀更換控制台和自動進樣系統1組"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 4915000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "又鑫生物科技有限公司",
+      "date": "2026-06-23",
+      "job_number": "KA115026",
+      "open_date": null,
+      "title": "「115年蛋白質基因偵測系統試劑及耗材乙批」採購案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2026-06-22",
+      "job_number": "KA115026",
+      "open_date": null,
+      "title": "「115年蛋白質基因偵測系統試劑及耗材乙批」採購案"
+    },
+    {
+      "agency": "衛生福利部國家中醫藥研究所",
+      "announcement_type": "決標公告",
+      "award_price": 7230000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "金萬林企業股份有限公司 (KIMFOREST ENTERPRISE CO., LTD.)",
+      "date": "2026-06-17",
+      "job_number": "115-2-013",
+      "open_date": null,
+      "title": "高通量影像擷取及AI分析系統一組"
+    },
+    {
+      "agency": "衛生福利部國家中醫藥研究所",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2026-06-16",
+      "job_number": "115-2-013",
+      "open_date": null,
+      "title": "高通量影像擷取及AI分析系統一組"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2026-06-05",
+      "job_number": "KA115026",
+      "open_date": null,
+      "title": "「115年蛋白質基因偵測系統試劑及耗材乙批」採購案"
+    },
+    {
+      "agency": "衛生福利部國家中醫藥研究所",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2026-06-02",
+      "job_number": "115-2-013",
+      "open_date": null,
+      "title": "高通量影像擷取及AI分析系統一組"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "決標公告",
+      "award_price": 5850000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "禮學社股份有限公司",
+      "date": "2026-05-28",
+      "job_number": "113TFDA-S-501-02",
+      "open_date": null,
+      "title": "「現代化食品藥物國家級實驗大樓實驗室桌櫃暨廢氣排放系統」採購案第二次契約變更"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "決標公告",
+      "award_price": 7770000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "台灣野村總研諮詢顧問股份有限公司",
+      "date": "2026-04-24",
+      "job_number": "K1140665893",
+      "open_date": null,
+      "title": "115年在宅醫療照護資訊平台規劃及專業技術服務案"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "決標公告",
+      "award_price": 3130000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "凌網資訊股份有限公司 (HYWEB SYSTEM SERVICES CO., LTD.)",
+      "date": "2026-04-09",
+      "job_number": "M1509239",
+      "open_date": null,
+      "title": "115年度中英文網站維運及功能擴充案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 7000000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "宏碁資訊服務股份有限公司 (ACER E-ENABLING SERVICE BUSINESS INC.)",
+      "date": "2026-04-09",
+      "job_number": "YJ115006",
+      "open_date": null,
+      "title": "115年度實驗室資訊管理系統功能增修"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2026-03-25",
+      "job_number": "K1140665893",
+      "open_date": null,
+      "title": "115年在宅醫療照護資訊平台規劃及專業技術服務案"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2026-03-03",
+      "job_number": "M1509239",
+      "open_date": null,
+      "title": "115年度中英文網站維運及功能擴充案"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "決標公告",
+      "award_price": 8850000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "全景軟體股份有限公司 (Changing Information Technology Inc.)",
+      "date": "2026-02-03",
+      "job_number": "M1513027",
+      "open_date": null,
+      "title": "「115-116年度多憑證驗存證系統維護及增修委外服務案」"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "決標公告",
+      "award_price": 7341000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "玳康科技有限公司",
+      "date": "2026-01-22",
+      "job_number": "W1140690684",
+      "open_date": null,
+      "title": "115年度健保資訊系統數位轉型推動服務案"
+    },
+    {
+      "agency": "衛生福利部社會及家庭署",
+      "announcement_type": "決標公告",
+      "award_price": 6200000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "汎宇電商股份有限公司",
+      "date": "2026-01-20",
+      "job_number": "C115013",
+      "open_date": null,
+      "title": "115-116年度社會福利民間資源友善查詢網系統提升數位效能及維運案"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "決標公告",
+      "award_price": 11300000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "多奇數位創意有限公司 (Duotify Inc.)",
+      "date": "2026-01-19",
+      "job_number": "MOHW115-FDA-D-113-000412",
+      "open_date": null,
+      "title": "115年度「ICH E2B(R3)藥品不良反應通報系統」擴充及維護案"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "決標公告",
+      "award_price": 3100000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "捷虹資訊股份有限公司",
+      "date": "2026-01-13",
+      "job_number": "MOHW115-FDA-D-113-000466",
+      "open_date": null,
+      "title": "115年度「優化藥品供應監測系統功能擴充及維運計畫」"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "決標公告",
+      "award_price": 5550000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "叡揚資訊股份有限公司 (Galaxy Software Services Corporation)",
+      "date": "2026-01-06",
+      "job_number": "S1140690639",
+      "open_date": null,
+      "title": "115年度WebFOCUS軟體維護案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2026-01-05",
+      "job_number": "S1140690639",
+      "open_date": null,
+      "title": "115年度WebFOCUS軟體維護案"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "決標公告",
+      "award_price": 11130000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "醫盟健康實業股份有限公司",
+      "date": "2025-12-31",
+      "job_number": "M1513006",
+      "open_date": null,
+      "title": "「115-116年度所屬醫院藥品物料聯合訂購網系統增修及維護委外服務案」"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "決標公告",
+      "award_price": 5650000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "商之器科技股份有限公司 (EBM Technologies Incorporated)",
+      "date": "2025-12-31",
+      "job_number": "M1513024",
+      "open_date": null,
+      "title": "115年度「醫療影像判讀中心系統維護及調整委外服務案」"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "決標公告",
+      "award_price": 4600000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "資拓宏宇國際股份有限公司 (International Integrated Systems, Inc.)",
+      "date": "2025-12-31",
+      "job_number": "K1140690515",
+      "open_date": null,
+      "title": "115年度對外服務相關資訊系統技術諮詢服務採購案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "決標公告",
+      "award_price": 119380000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "資拓宏宇國際股份有限公司 (International Integrated Systems, Inc.)",
+      "date": "2025-12-31",
+      "job_number": "K1140690524",
+      "open_date": null,
+      "title": "115年度系統主機及伺服器等軟硬體維護採購案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 6660000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "藍新資訊股份有限公司 (NEWEB INFORMATION CO., LTD.)",
+      "date": "2025-12-30",
+      "job_number": "LA114041",
+      "open_date": null,
+      "title": "115年資訊設備原廠維護授權採購案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 7368000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "宏碁資訊服務股份有限公司 (ACER E-ENABLING SERVICE BUSINESS INC.)",
+      "date": "2025-12-30",
+      "job_number": "LA114060",
+      "open_date": null,
+      "title": "115年度智慧防疫物資管理系統(SMIS)維護、功能增修暨雲端平台租賃採購案"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "決標公告",
+      "award_price": 9680000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "得威信資訊有限公司",
+      "date": "2025-12-30",
+      "job_number": "115TFDA-B-001",
+      "open_date": null,
+      "title": "115年度「邊境查驗自動化管理資訊系統維護及功能擴充案」"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "決標公告",
+      "award_price": 6820000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "立紘數位科技股份有限公司",
+      "date": "2025-12-30",
+      "job_number": "115TFDA-B-011",
+      "open_date": null,
+      "title": "115年度機關網站(含內部入口網及食品相關系統入口網)管理系統委外維護及功能擴充案"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "決標公告",
+      "award_price": 13200000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "神通資訊科技股份有限公司 (MiTAC Information Technology Corp.)",
+      "date": "2025-12-30",
+      "job_number": "115TFDA-B-021",
+      "open_date": null,
+      "title": "115年度「電腦機房運作管理及資訊設備維護委外案」"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-29",
+      "job_number": "LA114041",
+      "open_date": null,
+      "title": "115年資訊設備原廠維護授權採購案"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "決標公告",
+      "award_price": 15320000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "中華電信股份有限公司企業客戶分公司",
+      "date": "2025-12-29",
+      "job_number": "M1508199",
+      "open_date": null,
+      "title": "115-117年度Centrex電話系統租賃服務案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 9241000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "國際厚生數位科技股份有限公司 (OmniHealth Group, Inc.)",
+      "date": "2025-12-29",
+      "job_number": "LA114026",
+      "open_date": null,
+      "title": "115年度結核病追蹤管理系統委外維護暨功能擴充採購案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-26",
+      "job_number": "W1140690684",
+      "open_date": null,
+      "title": "115年度健保資訊系統數位轉型推動服務案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "決標公告",
+      "award_price": 27492780,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "伊雲谷數位科技股份有限公司 (eCloudvalley Digital Technology Co., Ltd.)",
+      "date": "2025-12-24",
+      "job_number": "K1140690549",
+      "open_date": null,
+      "title": "115年度Oracle軟體更新與升級授權採購案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-23",
+      "job_number": "K1140690549",
+      "open_date": null,
+      "title": "115年度Oracle軟體更新與升級授權採購案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-23",
+      "job_number": "S1140690639",
+      "open_date": null,
+      "title": "115年度WebFOCUS軟體維護案"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-23",
+      "job_number": "MOHW115-FDA-D-113-000466",
+      "open_date": null,
+      "title": "115年度「優化藥品供應監測系統功能擴充及維運計畫」"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-16",
+      "job_number": "MOHW115-FDA-D-113-000412",
+      "open_date": null,
+      "title": "115年度「ICH E2B(R3)藥品不良反應通報系統」擴充及維護案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 7568000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "宏碁資訊服務股份有限公司 (ACER E-ENABLING SERVICE BUSINESS INC.)",
+      "date": "2025-12-16",
+      "job_number": "LA114047",
+      "open_date": null,
+      "title": "115年度愛滋追蹤管理系統新增功能案採購案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-15",
+      "job_number": "K1140690524",
+      "open_date": null,
+      "title": "115年度系統主機及伺服器等軟硬體維護採購案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "決標公告",
+      "award_price": 18000000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "臺灣網路認證股份有限公司",
+      "date": "2025-12-12",
+      "job_number": "W1140690670",
+      "open_date": null,
+      "title": "115年度行動身分識別系統認證服務採購案"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-11",
+      "job_number": "115TFDA-B-011",
+      "open_date": null,
+      "title": "115年度機關網站(含內部入口網及食品相關系統入口網)管理系統委外維護及功能擴充案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 9850000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "資拓宏宇國際股份有限公司 (International Integrated Systems, Inc.)",
+      "date": "2025-12-11",
+      "job_number": "LA114045",
+      "open_date": null,
+      "title": "115年智慧檢疫多功能管理資訊系統維護及功能增修採購案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 16990000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "奧啓迪科技股份有限公司 (DeepQ Technology Corp.)",
+      "date": "2025-12-11",
+      "job_number": "LA114057",
+      "open_date": null,
+      "title": "115年疫苗接種行政電子化系統維護及功能增修採購案"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-08",
+      "job_number": "K1140690515",
+      "open_date": null,
+      "title": "115年度對外服務相關資訊系統技術諮詢服務採購案"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-05",
+      "job_number": "115TFDA-B-021",
+      "open_date": null,
+      "title": "115年度「電腦機房運作管理及資訊設備維護委外案」"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-04",
+      "job_number": "M1513024",
+      "open_date": null,
+      "title": "115年度「醫療影像判讀中心系統維護及調整委外服務案」"
+    },
+    {
+      "agency": "衛生福利部食品藥物管理署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-12-03",
+      "job_number": "115TFDA-B-001",
+      "open_date": null,
+      "title": "115年度「邊境查驗自動化管理資訊系統維護及功能擴充案」"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-11-25",
+      "job_number": "M1513027",
+      "open_date": null,
+      "title": "「115-116年度多憑證驗存證系統維護及增修委外服務案」"
+    },
+    {
+      "agency": "衛生福利部中央健康保險署",
+      "announcement_type": "決標公告",
+      "award_price": 6600000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "台灣敏腦股份有限公司",
+      "date": "2025-11-21",
+      "job_number": "V1140690533",
+      "open_date": null,
+      "title": "114年度預算控制資訊系統功能擴充暨115年度維護案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 19000000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "凌網資訊股份有限公司 (HYWEB SYSTEM SERVICES CO., LTD.)",
+      "date": "2025-11-20",
+      "job_number": "LA114021",
+      "open_date": null,
+      "title": "115年全國性預防接種資訊管理系統(NIIS)委外維護與功能增修採購案"
+    },
+    {
+      "agency": "衛生福利部",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-11-18",
+      "job_number": "M1513006",
+      "open_date": null,
+      "title": "「115-116年度所屬醫院藥品物料聯合訂購網系統增修及維護委外服務案」"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "決標公告",
+      "award_price": 5575000,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": "又鑫生物科技有限公司",
+      "date": "2025-09-24",
+      "job_number": "KA114052",
+      "open_date": null,
+      "title": "「114年蛋白質基因偵測系統試劑及耗材乙批」採購案"
+    },
+    {
+      "agency": "衛生福利部疾病管制署",
+      "announcement_type": "招標公告",
+      "award_price": null,
+      "bid_deadline": null,
+      "budget": null,
+      "companies": null,
+      "date": "2025-09-23",
+      "job_number": "KA114052",
+      "open_date": null,
+      "title": "「114年蛋白質基因偵測系統試劑及耗材乙批」採購案"
+    }
+  ],
+  "schema_version": "1.0",
+  "status": {
+    "message": "快照由最近一次成功同步的 PCC／NHI 資料庫重建；公告日期依目前資料範圍呈現。",
+    "source_max_date": "2026-07-22",
+    "state": "fresh"
+  },
+  "summary": {
+    "pcc_tender": {
+      "announcement_types": [
+        {
+          "count": 23,
+          "name": "招標公告"
+        },
+        {
+          "count": 31,
+          "name": "決標公告"
+        }
+      ],
+      "award_amount": {
+        "known_count": 31,
+        "sum_twd": 398360780
+      },
+      "budget": {
+        "known_count": 0,
+        "sum_twd": null
+      },
+      "date_range": {
+        "max": "2026-07-22",
+        "min": "2025-09-23"
+      },
+      "snapshot_row_count": 54
+    }
+  }
+}
