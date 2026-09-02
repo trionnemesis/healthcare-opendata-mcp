@@ -72,3 +72,39 @@ class TestEnricher:
         client = _FakeClient(search_html="x", status=429)
         with pytest.raises(BlockedError):
             await PccDetailEnricher(client).fetch_detail("X")
+
+
+class TestDetailUrlIsAnchoredToPcc:
+    """安全回歸(CWE-918):明細連結來自遠端 HTML,不得把 client 導向 web.pcc 以外主機。"""
+
+    @pytest.mark.parametrize(
+        "href",
+        [
+            "https://attacker.example/readBulletion",       # 絕對 URL
+            "//attacker.example/readBulletion",             # protocol-relative
+            "/readBulletion@attacker.example/x",            # userinfo 混淆
+            "/prkms/urlSelector/common/tpam?pk=x//evil",    # 路徑內夾帶 //
+        ],
+    )
+    async def test_offsite_detail_link_is_rejected(self, href):
+        client = _FakeClient(
+            search_html=f'<a href="{href}">明細</a>',
+            detail_html=_fx("pcc_detail_live.html"),
+        )
+        with pytest.raises(ValueError):
+            await PccDetailEnricher(client).fetch_detail("1130108-5")
+        # 關鍵:對外請求根本沒發出去(只有搜尋那一次 post)
+        assert [c[0] for c in client.calls] == ["post"]
+
+    async def test_relative_link_still_fetches_from_pcc(self):
+        client = _FakeClient(
+            search_html=_fx("pcc_search_result.html"),
+            detail_html=_fx("pcc_detail_live.html"),
+        )
+        d = await PccDetailEnricher(client).fetch_detail("1130108-5")
+        assert d is not None
+        get_urls = [u for kind, u in client.calls if kind == "get"]
+        assert get_urls == [
+            "https://web.pcc.gov.tw/tps/tender/common/bulletion/readBulletion"
+            "?pkPmsMain=53000000&orgId=3.80.11&caseNo=1130108-5"
+        ]
