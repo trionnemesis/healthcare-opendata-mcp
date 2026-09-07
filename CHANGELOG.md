@@ -1,5 +1,64 @@
 # Changelog
 
+## [0.8.0] - 2026-09-07
+
+### Changed
+- **Pages 快照的資料集矩陣改由 catalog 驅動(issue #25 Slice 3)**:`datasets` 先前是
+  **固定兩個 key 的物件** —— `build_snapshot` 把 `pcc_tender` / `nhi_clinic` 連同
+  `source_url` 字串寫死在 payload literal 裡,`schema-v1.json` 是
+  `additionalProperties: false` + 兩者皆 required,`verify_dashboard` 逐一檢查那兩個
+  名字,`_derive_status` 收硬編碼的兩元素 source 清單。
+  結果是 #26 建立的 catalog 一旦啟用新資料集,Pages **看不到它**,schema 還會拒收 ——
+  資料集名單有兩個真相來源,必然漂移。
+  - 現在 `datasets` 由 **catalog(已啟用者)∪ 資料庫**產生。停用的候選**不發布**:
+    它們尚未實查(#25 Slice 2),列在公開頁面會讓訪客誤以為已涵蓋。
+  - `source_url` 只有 PCC 在 `NON_CATALOG_SOURCE_URLS` 明列(它不是 catalog 驅動的),
+    其餘一律取自 catalog。同一件事不在兩個地方維護。
+  - 每筆資料集另帶 catalog 出處:`title` / `collection` / `update_cadence` /
+    `verified_at`。非 catalog 驅動者為 `null`,不臆造。
+  - `_derive_status` 的來源清單改由「實際發布的資料集反推 `source_id`」產生,
+    標籤取 `data_sources.name`(缺列則退回 `source_id`);`fresh` 訊息不再寫死「PCC／NHI」。
+- **`schema-v1.json` 對資料集開放**(放寬,非破壞):`datasets` 改為
+  `additionalProperties: {$ref dataset}` + `propertyNames: ^[a-z0-9_]+$`,
+  `required` 由兩者縮為 `["pcc_tender"]`;`dataset.row_count` 與 `dataset.source_url`
+  改為可為 null;新增選填的四個出處欄位。
+  **`schema_version` 維持 `"1.0"`** —— 先前每一份合法快照仍然合法,只是多了一些
+  也合法的快照。已評估過改陣列並切 v2,否決理由見設計文件。
+  - 實測:委入的 `current.json` 對新 schema 0 error;加入一筆全新資料集後仍 0 error
+    (即新增資料集**不需要**改 schema)。
+- **`verify_dashboard.py` 只驗形狀不驗成員**:`pcc_tender` 仍必須存在且 `row_count`
+  為整數(看板的摘要與表格都靠它),其餘資料集只檢查 key 命名、必填欄位齊全、
+  `row_count` 為整數或 null。驗證器若知道資料集名單,每加一個資料集就要改部署閘門。
+  維持 **stdlib-only**(`pages.yml` 不安裝套件)。
+
+### Added
+- 看板新增「資料集概覽」矩陣(`#dataset-matrix-body`):資料集、筆數、最後同步、
+  最近一次同步狀態、更新頻率、出處驗證日、授權。
+  以 `createElement` / `textContent` 渲染,不用 `innerHTML`(`verify_dashboard` 的
+  靜態檢查未放寬);無 JS 時顯示明確說明列,上方 KPI 摘要仍為建置時預渲染。
+- `docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md`:記錄本次對
+  2026-09-01 P0 契約的增量調整與「放寬 v1 而非切 v2」的理由。
+
+### Fixed
+- `row_count` 缺值語意一致化:物化表不存在時快照輸出 `null`、前端顯示「—」,
+  不再折成 0。「從未同步成功」與「同步成功但 0 筆」是兩件事。
+- `render_dashboard` 不再假設 `nhi_clinic` 一定存在(它由 catalog 決定);
+  缺席時 KPI 顯示「無資料」而非炸掉或顯示 0。
+
+### Verified
+- 全套件 **236 tests 通過**(修改前 220,新增 16:catalog 驅動的資料集 6、
+  render 容錯 2、驗證器開放性 8)。
+- `bandit -r src scripts -ll`:Medium 0(與修改前相同)。
+- `scripts/verify_dashboard.py --site docs` 通過;委入的 Pages artifact 未退化。
+- 以 `jsonschema` Draft 2020-12 實際驗證 schema 本身與委入快照(該套件只在本機
+  檢查時使用,**未**加入專案相依)。
+
+### 未處理(如實記錄)
+- `docs/data/current.json` **未重新產生**。它是一次真實同步的產物,本環境沒有那個
+  DB;用 fixture 重建等於用假資料覆蓋真資料。新增的出處欄位為選填,舊快照仍合法,
+  矩陣的出處欄位會顯示「—」直到下一次真實 export。
+- Pages 仍未自動同步(P1 範圍,見 #21)。
+
 ## [0.7.1] - 2026-09-07
 
 ### Added

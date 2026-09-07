@@ -4,11 +4,15 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024
+# datasets 的 key 由 dataset_id 正規化而來(見 export_board_data.snapshot_key)
+_DATASET_KEY_RE = re.compile(r"[a-z0-9_]+")
+_DATASET_FIELDS = {"row_count", "last_fetched_at", "source_url", "license"}
 VALID_STATES = {"fresh", "stale", "degraded", "empty"}
 ROW_FIELDS = {
     "date",
@@ -69,10 +73,30 @@ def validate_snapshot(payload: Any) -> None:
         raise ValueError("invalid status.state")
     if not isinstance(payload["status"].get("message"), str):
         raise ValueError("status.message must be a string")
-    for dataset_id in ("pcc_tender", "nhi_clinic"):
-        dataset = payload["datasets"].get(dataset_id)
-        if not isinstance(dataset, dict) or not isinstance(dataset.get("row_count"), int):
-            raise ValueError(f"invalid dataset metadata: {dataset_id}")
+    datasets = payload["datasets"]
+    if not isinstance(datasets, dict):
+        raise ValueError("datasets must be an object")
+    # datasets 由 catalog 與 DB 產生,名單不固定;此處只驗形狀,不驗成員。
+    # pcc_tender 是唯一的例外:看板的摘要與表格都由它撐,缺了頁面就沒有意義。
+    pcc = datasets.get("pcc_tender")
+    if not isinstance(pcc, dict) or not isinstance(pcc.get("row_count"), int):
+        raise ValueError("invalid dataset metadata: pcc_tender")
+    for key, dataset in datasets.items():
+        if not _DATASET_KEY_RE.fullmatch(key):
+            raise ValueError(f"invalid dataset key: {key!r}")
+        if not isinstance(dataset, dict):
+            raise ValueError(f"invalid dataset metadata: {key}")
+        row_count = dataset.get("row_count")
+        # null = 從未同步成功。這是允許的狀態,但不得是別的型別,也不得缺席。
+        if "row_count" not in dataset:
+            raise ValueError(f"dataset missing row_count: {key}")
+        if row_count is not None and (
+            not isinstance(row_count, int) or isinstance(row_count, bool)
+        ):
+            raise ValueError(f"dataset row_count must be an integer or null: {key}")
+        if not _DATASET_FIELDS.issubset(dataset):
+            missing = sorted(_DATASET_FIELDS - set(dataset))
+            raise ValueError(f"dataset {key} missing fields: {missing}")
     rows = payload["rows"]
     if not isinstance(rows, list):
         raise ValueError("rows must be an array")
@@ -158,6 +182,7 @@ def verify_site(site: Path) -> dict[str, Any]:
         "source-max-date",
         "pcc-row-count",
         "snapshot-row-count",
+        "dataset-matrix-body",
         "records-body",
         "keyword",
         "announcement-type",

@@ -88,6 +88,36 @@
       </div>
     </section>
 
+    <section class="dashboard-section" aria-labelledby="datasets-heading">
+      <div class="section-head dashboard-heading">
+        <div>
+          <p class="eyebrow">Dataset matrix</p>
+          <h2 id="datasets-heading">資料集概覽</h2>
+        </div>
+        <p>由 catalog 與資料庫產生；新增資料集後此表自動出現，不需改頁面。</p>
+      </div>
+
+      <div class="table-shell" tabindex="0" role="region" aria-label="資料集概覽，可水平捲動">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th scope="col">資料集</th>
+              <th scope="col">筆數</th>
+              <th scope="col">最後同步</th>
+              <th scope="col">最近一次同步狀態</th>
+              <th scope="col">更新頻率</th>
+              <th scope="col">出處驗證日</th>
+              <th scope="col">授權</th>
+            </tr>
+          </thead>
+          <tbody id="dataset-matrix-body">
+            <tr><td colspan="7">資料集矩陣需要 JavaScript；上方快照摘要仍可讀取。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="runtime-note">筆數為「—」代表該資料集尚未同步成功，與「同步成功但 0 筆」不同。</p>
+    </section>
+
     <section class="dashboard-section" aria-labelledby="records-heading">
       <div class="section-head dashboard-heading">
         <div>

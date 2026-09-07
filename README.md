@@ -67,6 +67,8 @@ The project keeps ingestion and querying separate:
 
 資料邊界：
 
+- 「資料集概覽」矩陣由 catalog（已啟用者）與資料庫產生，**不硬編碼資料集名單**：啟用一個新資料集後，重新 export 即會出現在頁面上，不需要改 HTML、schema 或部署閘門。停用的候選不發布 —— 它們尚未實查，列出來會讓訪客誤以為已涵蓋。
+- 矩陣中筆數顯示「—」代表該資料集**從未同步成功**（物化表尚未建立），與「同步成功但 0 筆」不同。
 - `generated_at` 是 UTC 快照產生時間；`status.source_max_date` 才是 PCC 官方資料中的最新日期。
 - 狀態明確區分 `fresh`、`stale`、`degraded`、`empty`；JSON 無法載入或格式錯誤時，頁面顯示失敗而不呈現假成功。
 - P0 只發布 allowlist 中的 PCC 欄位。NHI 僅顯示筆數與最後同步 metadata，不發布電話、地址或全院所目錄。
@@ -85,7 +87,7 @@ The project keeps ingestion and querying separate:
 .venv/bin/python scripts/verify_dashboard.py --site docs
 ```
 
-快照契約見 [`docs/data/schema-v1.json`](docs/data/schema-v1.json)，設計與 P0/P1/P2 邊界見 [`docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md`](docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md)。
+快照契約見 [`docs/data/schema-v1.json`](docs/data/schema-v1.json)，設計與 P0/P1/P2 邊界見 [`docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md`](docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md)；資料集矩陣改由 catalog 驅動的決策見 [`docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md`](docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md)。
 
 ## Install
 
@@ -182,6 +184,8 @@ HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp
            verified_at="2026-09-07",
            verified_note="實查 2026-09-07:HTTP 200；...",
 ```
+
+啟用一個資料集之後不需要再改別的地方：`hcmcp-sync` 會同步它，`list_datasets` 會列出它，重新 export 後 [資料看板](https://trionnemesis.github.io/healthcare-opendata-mcp/dashboard/) 的資料集矩陣也會出現它。
 
 該 script **只讀**：不會修改 `catalog.py`，也不會翻 `enabled`；啟用仍是人工 review 後的 PR 編輯。`--enabled-only` 可作為上游漂移檢查（欄位或 natural key 不再成立時離開碼非零）。若本機不便連外，可用 GitHub Actions 的 `Verify catalog sources` workflow 手動觸發（`workflow_dispatch`，未排程）。
 

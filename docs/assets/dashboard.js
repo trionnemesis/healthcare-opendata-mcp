@@ -30,6 +30,7 @@
     budgetKnownCount: document.querySelector("#budget-known-count"),
     awardSummary: document.querySelector("#award-summary"),
     awardKnownCount: document.querySelector("#award-known-count"),
+    datasetMatrixBody: document.querySelector("#dataset-matrix-body"),
     nhiRowCount: document.querySelector("#nhi-row-count"),
     nhiFetchedAt: document.querySelector("#nhi-fetched-at"),
     form: document.querySelector("#filters"),
@@ -116,14 +117,58 @@
     }
   }
 
+  // 資料集名單由 catalog 與資料庫產生,前端不硬編碼 —— 新增資料集後此表自動長出來。
+  function renderDatasetMatrix(datasets) {
+    const body = elements.datasetMatrixBody;
+    if (!body) return;
+    body.replaceChildren();
+    const ids = Object.keys(datasets).sort();
+    if (ids.length === 0) {
+      const row = document.createElement("tr");
+      const message = cell("快照未包含任何資料集。");
+      message.colSpan = 7;
+      row.append(message);
+      body.append(row);
+      return;
+    }
+    for (const id of ids) {
+      const dataset = datasets[id] || {};
+      const row = document.createElement("tr");
+      const nameCell = document.createElement("td");
+      const name = document.createElement("strong");
+      name.textContent = dataset.title || id;
+      nameCell.append(name);
+      if (dataset.title) {
+        const code = document.createElement("small");
+        code.textContent = ` ${id}`;
+        nameCell.append(code);
+      }
+      row.append(nameCell);
+      // row_count 為 null = 從未同步成功。顯示「—」,不顯示 0。
+      row.append(cell(unknownOr(dataset.row_count, formatCount)));
+      row.append(cell(unknownOr(dataset.last_fetched_at)));
+      row.append(cell(unknownOr(dataset.latest_run_status)));
+      row.append(cell(unknownOr(dataset.update_cadence)));
+      row.append(cell(unknownOr(dataset.verified_at)));
+      row.append(cell(unknownOr(dataset.license)));
+      body.append(row);
+    }
+  }
+
+  function unknownOr(value, format) {
+    if (value === null || value === undefined || value === "") return "—";
+    return format ? format(value) : String(value);
+  }
+
   function hydrateSummary(payload) {
     const summary = payload.summary.pcc_tender;
     const pcc = payload.datasets.pcc_tender;
-    const nhi = payload.datasets.nhi_clinic;
+    // nhi_clinic 由 catalog 決定,可能不在快照中;缺席時 KPI 顯示「—」而非 0。
+    const nhi = payload.datasets.nhi_clinic || {};
     setText(elements.generatedAt, payload.generated_at);
     setText(elements.sourceMaxDate, payload.status.source_max_date);
     setText(elements.schemaVersion, payload.schema_version);
-    setText(elements.pccRowCount, formatCount(pcc.row_count));
+    setText(elements.pccRowCount, unknownOr(pcc.row_count, formatCount));
     setText(elements.snapshotRowCount, formatCount(summary.snapshot_row_count));
     setText(
       elements.dateRange,
@@ -138,8 +183,9 @@
     setText(elements.budgetKnownCount, formatCount(summary.budget.known_count));
     setText(elements.awardSummary, formatMoney(summary.award_amount.sum_twd));
     setText(elements.awardKnownCount, formatCount(summary.award_amount.known_count));
-    setText(elements.nhiRowCount, formatCount(nhi.row_count));
-    setText(elements.nhiFetchedAt, nhi.last_fetched_at);
+    setText(elements.nhiRowCount, unknownOr(nhi.row_count, formatCount));
+    setText(elements.nhiFetchedAt, unknownOr(nhi.last_fetched_at));
+    renderDatasetMatrix(payload.datasets);
     updateStatus(payload.status.state, payload.status.message);
   }
 
