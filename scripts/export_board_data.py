@@ -20,11 +20,17 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
+from health_opendata_mcp.catalog import enabled_entries
+
 SCHEMA_VERSION = "1.0"
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_DETAIL_LIMIT = 1_000
 DEFAULT_STALE_AFTER_DAYS = 21
 VALID_STATES = {"fresh", "stale", "degraded", "empty"}
+
+# PCC 不是 catalog 驅動(半月 XML + 關鍵字過濾,見 catalog.py),故其出處在此明列。
+# 其餘資料集的出處一律來自 catalog,不在本檔重複維護 —— 重複就會漂移。
+NON_CATALOG_SOURCE_URLS = {"pcc-tender": "https://web.pcc.gov.tw/"}
 
 PUBLIC_COLUMNS = (
     "date",
@@ -95,12 +101,103 @@ def _table_exists(con: sqlite3.Connection, table: str) -> bool:
 
 def _dataset_metadata(con: sqlite3.Connection, dataset_id: str) -> dict[str, Any]:
     row = con.execute(
-        "SELECT last_fetched_at, license FROM datasets WHERE id = ?", (dataset_id,)
+        "SELECT last_fetched_at, license, source_id FROM datasets WHERE id = ?",
+        (dataset_id,),
     ).fetchone()
     return {
         "last_fetched_at": row[0] if row else None,
         "license": row[1] if row else None,
+        "source_id": row[2] if row else None,
     }
+
+
+def snapshot_key(dataset_id: str) -> str:
+    """dataset_id → snapshot 的 datasets key(與 ds_ 物化表同一套正規化)。"""
+    return re.sub(r"[^a-z0-9_]", "_", dataset_id.lower())
+
+
+def _row_count(con: sqlite3.Connection, dataset_id: str) -> int | None:
+    """物化表不存在 → None(從未同步成功),不是 0。缺值不折成 0。"""
+    table = "ds_" + snapshot_key(dataset_id)
+    if not _table_exists(con, table):
+        return None
+    # 表名由 dataset_id 經 snapshot_key() 正規化而來,非使用者輸入;
+    # SQLite 無法參數化表名。
+    return con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]  # nosec B608
+
+
+def _source_label(con: sqlite3.Connection, source_id: str) -> str:
+    row = con.execute(
+        "SELECT name FROM data_sources WHERE id = ?", (source_id,)
+    ).fetchone()
+    return (row[0] if row and row[0] else source_id)
+
+
+def published_dataset_ids(con: sqlite3.Connection) -> list[str]:
+    """要發布的資料集 = catalog 已啟用者 ∪ DB 既有者 ∪ pcc-tender(非 catalog 驅動)。"""
+    in_db = [r[0] for r in con.execute("SELECT id FROM datasets ORDER BY id")]
+    enabled = [e.dataset_id for e in enabled_entries()]
+    return sorted(set(in_db) | set(enabled) | {"pcc-tender"})
+
+
+def build_datasets(
+    con: sqlite3.Connection, *, pcc_row_count: int
+) -> dict[str, dict[str, Any]]:
+    """由 catalog(已啟用者)∪ DB 產生資料集矩陣 —— 不硬編碼 dataset 名單。
+
+    停用的 catalog 候選**不**發布:它們尚未實查,列出來會讓訪客誤以為已涵蓋。
+    已啟用但尚未同步的資料集會出現,且 row_count 為 null —— 那正是要讓人看見的
+    狀態,與「同步成功但 0 筆」不同。
+    """
+    catalog = {e.dataset_id: e for e in enabled_entries()}
+    dataset_ids = published_dataset_ids(con)
+
+    datasets: dict[str, dict[str, Any]] = {}
+    for dataset_id in dataset_ids:
+        meta = _dataset_metadata(con, dataset_id)
+        entry = catalog.get(dataset_id)
+        source_id = meta["source_id"]
+        run_status, run_finished_at, _ = (
+            _latest_run(con, source_id) if source_id else (None, None, False)
+        )
+        source_url = NON_CATALOG_SOURCE_URLS.get(dataset_id)
+        if source_url is None and entry is not None:
+            source_url = entry.landing_url or entry.download_urls[0]
+        datasets[snapshot_key(dataset_id)] = {
+            "row_count": (
+                pcc_row_count if dataset_id == "pcc-tender"
+                else _row_count(con, dataset_id)
+            ),
+            "last_fetched_at": meta["last_fetched_at"],
+            "latest_run_status": run_status,
+            "latest_run_finished_at": run_finished_at,
+            "source_url": source_url,
+            "license": meta["license"],
+            # catalog 出處。非 catalog 驅動的資料集(PCC)為 null,不臆造。
+            "title": entry.title if entry else None,
+            "collection": entry.collection if entry else None,
+            "update_cadence": entry.update_cadence if entry else None,
+            "verified_at": entry.verified_at if entry else None,
+        }
+    return datasets
+
+
+def status_sources(
+    con: sqlite3.Connection, dataset_ids: Iterable[str]
+) -> list[tuple[str, str | None, str | None, bool]]:
+    """由實際發布的資料集反推要納入狀態判定的來源 —— 不硬編碼 PCC/NHI。
+
+    尚未同步過的資料集沒有 source_id,因此不會拉低整頁狀態;它的 row_count=null
+    本身已經是可見的訊號。
+    """
+    source_ids = sorted(
+        {
+            sid
+            for dataset_id in dataset_ids
+            if (sid := _dataset_metadata(con, dataset_id)["source_id"])
+        }
+    )
+    return [(_source_label(con, sid), *_latest_run(con, sid)) for sid in source_ids]
 
 
 def _latest_run(
@@ -203,10 +300,14 @@ def _derive_status(
             "source_max_date": source_max_date,
             "message": "來源同步完成時間格式無法驗證；目前顯示可驗證的既有資料。",
         }
+    labels = "／".join(name for name, *_ in source_runs) or "已登錄"
     return {
         "state": "fresh",
         "source_max_date": source_max_date,
-        "message": "快照由最近一次成功同步的 PCC／NHI 資料庫重建；公告日期依目前資料範圍呈現。",
+        "message": (
+            f"快照由最近一次成功同步的 {labels} 資料庫重建；"
+            "公告日期依目前資料範圍呈現。"
+        ),
     }
 
 
@@ -266,18 +367,8 @@ def build_snapshot(
     dates = [row["date"] for row in full_rows if row["date"]]
     source_max_date = max(dates) if dates else None
     source_min_date = min(dates) if dates else None
-    pcc_meta = _dataset_metadata(con, "pcc-tender")
-    pcc_run_status, pcc_run_finished_at, pcc_run_has_errors = _latest_run(
-        con, "pcc-opendata"
-    )
-
-    nhi_count = 0
-    if _table_exists(con, "ds_nhi_clinic"):
-        nhi_count = con.execute('SELECT COUNT(*) FROM "ds_nhi_clinic"').fetchone()[0]
-    nhi_meta = _dataset_metadata(con, "nhi-clinic")
-    nhi_run_status, nhi_run_finished_at, nhi_run_has_errors = _latest_run(
-        con, "nhi-opendata"
-    )
+    dataset_ids = published_dataset_ids(con)
+    datasets = build_datasets(con, pcc_row_count=total_count)
 
     type_counts = Counter(
         row["announcement_type"]
@@ -290,10 +381,7 @@ def build_snapshot(
     status = _derive_status(
         row_count=total_count,
         source_max_date=source_max_date,
-        source_runs=[
-            ("PCC", pcc_run_status, pcc_run_finished_at, pcc_run_has_errors),
-            ("NHI", nhi_run_status, nhi_run_finished_at, nhi_run_has_errors),
-        ],
+        source_runs=status_sources(con, dataset_ids),
         generated_at=generated_at,
         stale_after_days=stale_after_days,
     )
@@ -302,24 +390,7 @@ def build_snapshot(
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at.isoformat().replace("+00:00", "Z"),
         "status": status,
-        "datasets": {
-            "pcc_tender": {
-                "row_count": total_count,
-                "last_fetched_at": pcc_meta["last_fetched_at"],
-                "latest_run_status": pcc_run_status,
-                "latest_run_finished_at": pcc_run_finished_at,
-                "source_url": "https://web.pcc.gov.tw/",
-                "license": pcc_meta["license"],
-            },
-            "nhi_clinic": {
-                "row_count": nhi_count,
-                "last_fetched_at": nhi_meta["last_fetched_at"],
-                "latest_run_status": nhi_run_status,
-                "latest_run_finished_at": nhi_run_finished_at,
-                "source_url": "https://info.nhi.gov.tw/",
-                "license": nhi_meta["license"],
-            },
-        },
+        "datasets": datasets,
         "summary": {
             "pcc_tender": {
                 "snapshot_row_count": total_count,
@@ -373,10 +444,16 @@ def _format_money(value: int | float | None) -> str:
     return "無可用金額" if value is None else f"NT$ {value:,.0f}"
 
 
+def _format_count(value: int | None) -> str:
+    """None = 從未同步成功。顯示「無資料」而不是 0(0 代表同步成功但空表)。"""
+    return "無資料" if value is None else f"{value:,}"
+
+
 def render_dashboard(template: str, payload: dict[str, Any]) -> str:
     """Render the no-JS core summary; record rows remain only in current.json."""
     summary = payload["summary"]["pcc_tender"]
     datasets = payload["datasets"]
+    nhi = datasets.get("nhi_clinic") or {}
     type_summary = " · ".join(
         f'{item["name"]} {item["count"]:,}'
         for item in summary["announcement_types"]
@@ -386,7 +463,7 @@ def render_dashboard(template: str, payload: dict[str, Any]) -> str:
         "STATUS_MESSAGE": payload["status"]["message"],
         "GENERATED_AT": _format_datetime(payload["generated_at"]),
         "SOURCE_MAX_DATE": payload["status"]["source_max_date"] or "無法確認",
-        "PCC_ROW_COUNT": f'{datasets["pcc_tender"]["row_count"]:,}',
+        "PCC_ROW_COUNT": _format_count(datasets["pcc_tender"]["row_count"]),
         "SNAPSHOT_ROW_COUNT": f'{summary["snapshot_row_count"]:,}',
         "DATE_RANGE": (
             f'{summary["date_range"]["min"] or "無法確認"} – '
@@ -397,8 +474,10 @@ def render_dashboard(template: str, payload: dict[str, Any]) -> str:
         "BUDGET_KNOWN_COUNT": f'{summary["budget"]["known_count"]:,}',
         "AWARD_SUMMARY": _format_money(summary["award_amount"]["sum_twd"]),
         "AWARD_KNOWN_COUNT": f'{summary["award_amount"]["known_count"]:,}',
-        "NHI_ROW_COUNT": f'{datasets["nhi_clinic"]["row_count"]:,}',
-        "NHI_FETCHED_AT": _format_datetime(datasets["nhi_clinic"]["last_fetched_at"]),
+        # nhi_clinic 是 catalog 驅動的,可能不在快照中(未啟用/未同步)。
+        # 缺席時顯示「無資料」,不顯示 0 —— 0 會被讀成「同步成功但沒有診所」。
+        "NHI_ROW_COUNT": _format_count(nhi.get("row_count")),
+        "NHI_FETCHED_AT": _format_datetime(nhi.get("last_fetched_at")),
     }
     rendered = template
     for key, value in replacements.items():

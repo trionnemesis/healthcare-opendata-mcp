@@ -241,3 +241,98 @@ def test_failed_build_preserves_existing_snapshot(tmp_path: Path) -> None:
         export_snapshot(db_path, out, generated_at=GENERATED_AT)
 
     assert json.loads(out.read_text(encoding="utf-8")) == {"known": "good"}
+
+
+class TestCatalogDrivenDatasets:
+    """datasets 由 catalog(已啟用者)∪ DB 產生 —— 不硬編碼 dataset 名單。
+
+    回歸重點:先前 build_snapshot 把 pcc_tender / nhi_clinic 寫死在 payload 裡,
+    catalog 啟用新資料集後 Pages 看不到它,schema 也會拒收。
+    """
+
+    def _snapshot(self, tmp_path: Path, rows=None):
+        con = make_db(tmp_path / "matrix.db", rows or sample_rows())
+        return build_snapshot(con, generated_at=GENERATED_AT), con
+
+    def test_enabled_catalog_dataset_carries_provenance(self, tmp_path):
+        payload, _ = self._snapshot(tmp_path)
+        nhi = payload["datasets"]["nhi_clinic"]
+        assert nhi["title"] == "健保特約醫事機構-診所"
+        assert nhi["collection"] == "healthcare"
+        assert nhi["update_cadence"] == "daily"
+        assert nhi["verified_at"] == "2026-06-10"
+        # 出處來自 catalog,不再是本檔寫死的字串
+        assert nhi["source_url"].startswith("https://info.nhi.gov.tw/")
+        assert nhi["row_count"] == 2
+
+    def test_disabled_candidates_are_not_published(self, tmp_path):
+        from health_opendata_mcp.catalog import CATALOG
+        from export_board_data import snapshot_key
+
+        payload, _ = self._snapshot(tmp_path)
+        for entry in CATALOG:
+            if not entry.enabled:
+                # 尚未實查的候選列出來,會讓訪客誤以為已涵蓋
+                assert snapshot_key(entry.dataset_id) not in payload["datasets"]
+
+    def test_pcc_is_published_without_catalog_provenance(self, tmp_path):
+        payload, _ = self._snapshot(tmp_path)
+        pcc = payload["datasets"]["pcc_tender"]
+        assert pcc["source_url"] == "https://web.pcc.gov.tw/"
+        # PCC 不是 catalog 驅動的,出處欄位留 null,不臆造
+        assert pcc["title"] is None
+        assert pcc["verified_at"] is None
+        assert pcc["row_count"] == len(sample_rows())
+
+    def test_dataset_without_materialized_table_reports_null_not_zero(self, tmp_path):
+        con = make_db(tmp_path / "ghost.db", sample_rows())
+        con.execute(
+            "INSERT INTO datasets (id, source_id, title, schema_json)"
+            " VALUES ('ghost-ds', 'nhi-opendata', 'Ghost', '[]')"
+        )
+        con.commit()
+        payload = build_snapshot(con, generated_at=GENERATED_AT)
+        ghost = payload["datasets"]["ghost_ds"]
+        # 從未同步成功 ≠ 同步成功但 0 筆
+        assert ghost["row_count"] is None
+        assert ghost["last_fetched_at"] is None
+
+    def test_dataset_keys_are_deterministically_ordered(self, tmp_path):
+        payload, _ = self._snapshot(tmp_path)
+        keys = list(payload["datasets"])
+        assert keys == sorted(keys)
+
+    def test_status_message_names_the_sources_actually_present(self, tmp_path):
+        payload, _ = self._snapshot(tmp_path)
+        assert payload["status"]["state"] == "fresh"
+        # 來源標籤由 DB 反推;fixture 未登錄 nhi-opendata 的 data_sources 列,
+        # 因此退回 source_id —— 退回本身也必須是可見的事實
+        assert "nhi-opendata" in payload["status"]["message"]
+        assert "PCC" in payload["status"]["message"]
+
+
+class TestRenderDashboardTolerance:
+    def test_missing_nhi_dataset_renders_no_data_instead_of_zero(self, tmp_path):
+        con = make_db(tmp_path / "nonhi.db", sample_rows())
+        payload = build_snapshot(con, generated_at=GENERATED_AT)
+        payload["datasets"].pop("nhi_clinic")
+        template = Path("scripts/templates/dashboard.html").read_text(encoding="utf-8")
+        rendered = render_dashboard(template, payload)
+        assert "無資料" in rendered
+        assert "{{" not in rendered
+
+    def test_dataset_matrix_container_exists_in_template(self):
+        template = Path("scripts/templates/dashboard.html").read_text(encoding="utf-8")
+        assert 'id="dataset-matrix-body"' in template
+
+
+def test_committed_dashboard_matches_template_render() -> None:
+    """委入的 docs/dashboard/index.html 必須就是 template + 委入快照的渲染結果。
+
+    兩者是手改容易漂移的一對:template 加了區塊而 artifact 沒重新產生時,
+    Pages 上看到的就不是 repo 裡宣稱的那個頁面。
+    """
+    payload = json.loads(Path("docs/data/current.json").read_text(encoding="utf-8"))
+    template = Path("scripts/templates/dashboard.html").read_text(encoding="utf-8")
+    committed = Path("docs/dashboard/index.html").read_text(encoding="utf-8")
+    assert render_dashboard(template, payload) == committed

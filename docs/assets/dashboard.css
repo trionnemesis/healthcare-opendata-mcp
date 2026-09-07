@@ -225,6 +225,15 @@ table {
   font-size: 0.9rem;
 }
 
+/* 資料集矩陣只有 7 欄,套用 PCC 明細表的 1180px 會在桌機留下大片空白 */
+.matrix-table {
+  min-width: 720px;
+}
+
+.dataset-unknown {
+  color: var(--muted);
+}
+
 th,
 td {
   padding: 0.8rem;
