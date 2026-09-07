@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.7.0] - 2026-09-07
+
+### Added
+- **資料集目錄 `catalog.py`(issue #25 Slice 1)**:把「要同步哪些政府開放資料」從
+  `cli.py` 的模組層常數,改成帶出處的宣告式資料。
+  每筆 `CatalogEntry` 攜帶 `update_cadence`、`landing_url`、`verified_at`、
+  `verified_note`、`enabled`,擴充一個資料集從此是「加一筆資料 + 實查後翻一個
+  flag」,而不是改 code。
+  以 import 時執行的 `validate_catalog()` 強制四條不變量:
+  - **驗證閘門**:`enabled=True` 必須有 `verified_at`(YYYY-MM-DD)與 `verified_note`。
+    未實查的候選可以進目錄,但只能是 `enabled=False` —— 目錄有能力誠實表達
+    「還沒驗證」,不需要靠猜測填空。
+  - **官方網域白名單**:下載與說明頁 URL 的 host 必須在 `OFFICIAL_HOSTS`。entry 是
+    資料;不設限等於「新增一筆資料 = 新增一個對任意主機發請求的能力」。
+  - **kind 與欄位一致**:`nhi_api` 只能有 `r_id`、`static_csv` 只能有 `urls`。
+  - **`r_id` 字元集**:`r_id` 會被字串插值進 query string
+    (`NhiApiAdapter.discover`),限制為 `[A-Za-z0-9]+(-[A-Za-z0-9]+)+` 才能保證它不會
+    挾帶 `&` / `?` / `#` / 空白去改寫 URL 的其他參數。
+- `list_datasets` / `get_dataset` 新增 `last_fetched_at` 與 `row_count`(additive,
+  既有欄位與參數簽章不變)。先前兩者都不回新鮮度,呼叫端無從分辨「查無資料」與
+  「這個資料集根本沒同步成功」—— 這與專案自己在 #21 寫下的「資料新鮮度與失敗
+  狀態也是資料」矛盾。
+  - 讀模型以新的 `DatasetStatus` DTO 承載,刻意不塞進 ingestion 端的 `DatasetMeta`。
+  - **物化表不存在時 `row_count` 為 `null`,不折成 0**:「從未同步成功」與
+    「同步成功但 0 筆」是兩件事,不可混為一談。
+- `SqliteRepository.dataset_status()` / `list_dataset_status()`。
+- `NhiApiAdapter` 的 `NHI_API_BASE` 由私有改為公開常數,讓 catalog 能組出
+  「實際會被抓取的 URL」並對它做白名單檢查。
+
+### Fixed
+- **`StaticCsvAdapter` 從未被實例化**:該 adapter 自 0.2.0 起已實作、已由
+  `adapters/__init__.py` 匯出、有 5 項測試,但 `cli.py:_sync()` 只組
+  `NhiApiAdapter` + `PccTenderAdapter` —— `gov-static` 來源永遠不會註冊,靜態 CSV
+  實際貢獻 0 筆。現改由 `build_adapters()` 依 catalog 組裝並接上。
+  - 目前 catalog 沒有任何 enabled 的 static entry(見下方「未驗證事項」),
+    故本次仍不會發出靜態 CSV 請求;接線本身以注入 spec 的測試釘住。
+  - `build_adapters()` 對沒有 enabled entry 的 kind 不建立 adapter —— 不註冊一個
+    永遠抓 0 筆的來源。
+
+### Verified
+- 全套件 **203 tests 通過**(修改前 159,新增 44:catalog 不變量 28、
+  來源組裝 6、dataset 新鮮度 6、service additive 欄位 4)。
+- `bandit -r src scripts -ll`:Medium 0(與修改前逐項相同:Low 3 / Medium 0)。
+- `pip-audit`:專案相依無弱點;僅回報執行環境 venv bootstrap 的 `pip 24.0` /
+  `setuptools`,不屬任何專案相依(CI 在 3.12 且先升級 pip,不會出現)。
+- **未驗證事項(如實記錄)**:本次 session 的 egress 政策拒絕
+  `info.nhi.gov.tw:443`(proxy 回 403),因此**沒有**對任何官方端點做實查。
+  - `nhi-clinic` 的 `verified_at=2026-06-10` 沿用 repo 既有的實查註記,非本次驗證。
+  - `nhi-hospital-district`(D21003-003)、`nhi-hospital-bed-ratio`(D02001-015)
+    的 rId 取自 `tests/adapters/test_nhi.py`,repo 內無實查日期,故以
+    `enabled=False`、`verified_at=None` 進目錄,不會被同步。
+  - `StaticCsvAdapter` 原本預計接的 `data.gov.tw` / `mohw.gov.tw` distribution URL
+    在 repo 內只有 `example.test` 佔位值,無可驗證的真實 URL,故未加入目錄。
+
 ## [0.6.3] - 2026-08-14
 
 ### Fixed

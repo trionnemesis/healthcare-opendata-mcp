@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 
 from health_opendata_mcp.adapters.pcc_detail import PccDetailEnricher, default_client
@@ -18,6 +19,10 @@ from health_opendata_mcp.contracts import (
 from health_opendata_mcp.domain.query_guard import DEFAULT_LIMIT, QueryValidationError
 from health_opendata_mcp.repository.query_executor import QueryDeniedError
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
 
 
 def _result_dict(result: QueryResult) -> dict[str, Any]:
@@ -63,6 +68,14 @@ class QueryService:
         ]
 
     async def list_datasets(self) -> list[dict[str, Any]]:
+        """資料集清單 —— 一併回新鮮度,讓呼叫端不必額外查就能判斷資料是否過期。
+
+        `row_count` 為 null 代表該 dataset 從未成功同步(物化表尚不存在),
+        與「同步成功但 0 筆」不同,不可混為一談。
+        """
+        status = {
+            s.dataset_id: s for s in await self._repo.list_dataset_status()
+        }
         return [
             {
                 "id": d.id,
@@ -70,6 +83,10 @@ class QueryService:
                 "source_id": d.source_id,
                 "collection": d.collection,
                 "columns": [c.name for c in d.columns],
+                "last_fetched_at": _iso(
+                    status[d.id].last_fetched_at if d.id in status else None
+                ),
+                "row_count": status[d.id].row_count if d.id in status else None,
             }
             for d in await self._repo.list_datasets()
         ]
@@ -88,6 +105,9 @@ class QueryService:
             "license": meta.license,
             "schema": [{"name": c.name, "type": c.type} for c in meta.columns],
         }
+        status = await self._repo.dataset_status(dataset_id)
+        info["last_fetched_at"] = _iso(status.last_fetched_at if status else None)
+        info["row_count"] = status.row_count if status else None
         if sample_rows > 0:
             info["sample"] = _result_dict(
                 await self._repo.sample_rows(dataset_id, sample_rows)

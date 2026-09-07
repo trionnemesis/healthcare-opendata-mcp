@@ -15,7 +15,11 @@ from health_opendata_mcp.adapters import (
     NhiApiAdapter,
     NhiDatasetSpec,
     PccTenderAdapter,
+    StaticCsvAdapter,
+    StaticCsvSpec,
 )
+from health_opendata_mcp.catalog import enabled_nhi_specs, enabled_static_specs
+from health_opendata_mcp.contracts import SourceAdapter
 from health_opendata_mcp.ingestion.pipeline import run_source
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
@@ -43,14 +47,11 @@ def ensure_db_dir(db_path: str) -> Path:
     return parent
 
 
-# 診所(NHI 一級 API,約 24.5k 筆/每日更新);實查 2026-06-10 resource = D21004-009
-NHI_DATASETS = [
-    NhiDatasetSpec(
-        dataset_id="nhi-clinic",
-        r_id="A21030000I-D21004-009",
-        title="健保特約醫事機構-診所",
-    ),
-]
+# 要同步哪些開放資料由 catalog 決定(見 health_opendata_mcp/catalog.py):
+# 新增資料集 = 加一筆帶出處的 entry,不必再改本檔。此處只保留投影後的
+# spec 清單,維持既有 import 路徑不變。
+NHI_DATASETS = enabled_nhi_specs()
+STATIC_CSV_DATASETS = enabled_static_specs()
 
 # 資訊勞務主題關鍵字 — 與看板 pcc-it-tender-board / 半月排程 SKILL 同步維護
 IT_INCLUDE = (
@@ -66,13 +67,29 @@ IT_EXCLUDE = (
 )
 
 
-async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
-    ensure_db_dir(db_path)
-    repo = SqliteRepository(db_path)
-    await repo.init()
-    adapters = [
-        NhiApiAdapter(NHI_DATASETS),
-        # 衛福部轄下機關 + 資訊勞務(IT 關鍵字)標案 — 看板/排程資料源
+def build_adapters(
+    award_months: int,
+    tender_months: int,
+    *,
+    nhi_specs: list[NhiDatasetSpec] | None = None,
+    static_specs: list[StaticCsvSpec] | None = None,
+) -> list[SourceAdapter]:
+    """依 catalog 組出本輪要跑的 adapter。
+
+    只有 catalog 中 enabled 的 entry 會產生網路請求;某一 kind 沒有任何
+    enabled entry 時就不建立對應 adapter —— 不註冊一個永遠抓 0 筆的來源。
+    spec 可注入(DI),測試不必動模組層狀態。
+    """
+    nhi = NHI_DATASETS if nhi_specs is None else nhi_specs
+    static = STATIC_CSV_DATASETS if static_specs is None else static_specs
+    adapters: list[SourceAdapter] = []
+    if nhi:
+        adapters.append(NhiApiAdapter(nhi))
+    if static:
+        adapters.append(StaticCsvAdapter(static))
+    # 衛福部轄下機關 + 資訊勞務(IT 關鍵字)標案 — 看板/排程資料源。
+    # PCC 不是 CSV registry 驅動(半月 XML + 關鍵字過濾),故不進 catalog。
+    adapters.append(
         PccTenderAdapter(
             award_months=award_months,
             tender_months=tender_months,
@@ -81,8 +98,16 @@ async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
             collection="procurement",
             title_includes=IT_INCLUDE,
             title_excludes=IT_EXCLUDE,
-        ),
-    ]
+        )
+    )
+    return adapters
+
+
+async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
+    ensure_db_dir(db_path)
+    repo = SqliteRepository(db_path)
+    await repo.init()
+    adapters = build_adapters(award_months, tender_months)
     exit_code = 0
     for adapter in adapters:
         summary = await run_source(adapter, repo)
