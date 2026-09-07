@@ -18,7 +18,8 @@ from health_opendata_mcp.contracts import (
     ResourceRef,
 )
 
-_BASE = "https://info.nhi.gov.tw/api/iode0000s01/Dataset"
+# public:catalog 需要它來組出「實際會被抓取的 URL」並做網域白名單檢查
+NHI_API_BASE = "https://info.nhi.gov.tw/api/iode0000s01/Dataset"
 _LICENSE = "政府資料開放授權條款 1.0"
 
 
@@ -60,7 +61,7 @@ class NhiApiAdapter:
                     collection=spec.collection,
                     license=_LICENSE,
                 ),
-                url=f"{_BASE}?rId={spec.r_id}",
+                url=f"{NHI_API_BASE}?rId={spec.r_id}",
                 fmt="csv",
                 meta={"natural_key_columns": list(spec.effective_key_columns)},
             )

@@ -147,13 +147,33 @@ HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp
 | `pcc-tender` | 衛生福利部轄下機關的資訊勞務相關標案 | [政府電子採購網](https://web.pcc.gov.tw/) | 半月 XML；明細欄位按需 enrich |
 | `nhi-clinic` | 健保特約醫事機構－診所 | [健保署資料開放平台](https://info.nhi.gov.tw/) | CSV API，每日更新 |
 
+### Dataset catalog
+
+要同步哪些政府開放資料，由 [`src/health_opendata_mcp/catalog.py`](src/health_opendata_mcp/catalog.py) 這份宣告式目錄決定 —— 不是散落在程式流程裡。每筆 entry 除了 resource id／URL，還攜帶**出處與驗證狀態**：更新頻率、官方說明頁、`verified_at`（何時對官方端點實查過）、`verified_note`（實查當下觀察到的事實）與 `enabled`。
+
+目錄在 import 時就會被驗證，違反即失敗（不靜默降級）：
+
+- **驗證閘門** — `enabled=true` 必須有 `verified_at` 與 `verified_note`。未實查的候選可以留在目錄裡，但只能是 `enabled=false`；目錄有能力誠實表達「還沒驗證」。
+- **官方網域白名單** — 下載與說明頁 URL 的 host 必須在 `OFFICIAL_HOSTS`。entry 是資料；不設限等於「新增一筆資料 = 新增一個對任意主機發請求的能力」。
+- **欄位一致性與 `r_id` 字元集** — `r_id` 會被插值進 query string，限制字元集才能保證它不會挾帶 `&` / `?` 改寫 URL 的其他參數。
+
+因此擴充資料範圍的流程是：
+
+```text
+1. 加一筆 CatalogEntry，enabled=False、verified_at=None
+2. 對官方端點實查，把觀察到的事實寫進 verified_note，填上 verified_at
+3. 改 enabled=True
+```
+
+目前目錄中的候選（**尚未實查，不會被同步**）：`nhi-hospital-district`（健保特約醫事機構－地區醫院）、`nhi-hospital-bed-ratio`（全民健保特約醫院之保險病床比率）。兩者的 `rId` 取自本 repository 既有測試，沒有實查日期紀錄，因此維持停用。
+
 ### MCP tools
 
 | Tool | Purpose |
 |---|---|
 | `list_sources` | 列出資料來源、取得策略與最後抓取時間 |
-| `list_datasets` | 列出可查詢資料集與欄位 |
-| `get_dataset` | 取得 dataset metadata、schema 與可選的抽樣資料列 |
+| `list_datasets` | 列出可查詢資料集、欄位與新鮮度（`last_fetched_at` / `row_count`） |
+| `get_dataset` | 取得 dataset metadata、schema、新鮮度與可選的抽樣資料列 |
 | `query_rows` | 對單一 dataset 做 SELECT-only 篩選、排序與聚合 |
 | `search_records` | 跨資料集關鍵字搜尋 |
 | `get_record` | 以 `(dataset_id, natural_key)` 取得單筆完整資料 |
@@ -168,6 +188,8 @@ HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp
 list_datasets()
 get_dataset(dataset_id="pcc-tender", sample_rows=5)
 ```
+
+兩者都會回 `last_fetched_at` 與 `row_count`，因此不需要額外查詢就能判斷資料是否過期。`row_count` 為 `null` 代表該資料集**從未同步成功**（物化表尚未建立），與「同步成功但 0 筆」不同 —— 缺值不會被折成 0。
 
 `query_rows` 保留 Twinkle 相容的 SQL-style 查詢介面，支援欄位選取、`WHERE`、`GROUP BY`、排序與聚合：
 
@@ -231,6 +253,7 @@ CI（`.github/workflows/ci.yml`）在 push 與 pull request 跑相同三項：py
 
 ```text
 src/health_opendata_mcp/
+├── catalog.py     資料集目錄：要同步哪些開放資料（含出處與驗證閘門）
 ├── adapters/      官方來源 adapter 與 HTTP/CSV/PCC parser
 ├── domain/        query_guard 等純函式安全規則
 ├── ingestion/     discover → fetch → normalize → upsert pipeline
@@ -238,7 +261,7 @@ src/health_opendata_mcp/
 └── mcp_server/    FastMCP tools、transport 與 QueryService
 ```
 
-新增健保資料集只需在 `cli.py` 的 `NHI_DATASETS` 登錄 `rId`；新增資料來源則實作 `SourceAdapter` 的 `discover`、`fetch`、`normalize`。標案的資訊勞務主題篩選由 `cli.py` 的 `IT_INCLUDE` / `IT_EXCLUDE` 關鍵字決定。
+新增資料集是在 `catalog.py` 加一筆 `CatalogEntry`（見上方 [Dataset catalog](#dataset-catalog)），不必改 `cli.py`；`cli.py` 的 `build_adapters()` 只依目錄中 `enabled` 的 entry 組裝 adapter，某一種 adapter 沒有啟用項目時就不建立。新增**資料來源**（新的取得策略）才需要實作 `SourceAdapter` 的 `discover`、`fetch`、`normalize`。標案的資訊勞務主題篩選由 `cli.py` 的 `IT_INCLUDE` / `IT_EXCLUDE` 關鍵字決定。
 
 行為契約以 Gherkin 記錄在 `spec/features/`（ingestion、query-rows、query-tools、source-registration、headless-fallback），資料模型見 `spec/erm.dbml`。
 
@@ -256,6 +279,7 @@ src/health_opendata_mcp/
 ## Scope & limits
 
 - 預設同步範圍刻意收斂為衛福部資訊勞務相關標案與健保診所，不是完整的政府採購或醫療資料目錄。
+- `catalog.py` 中 `enabled=false` 的候選資料集尚未對官方端點實查，不會被同步，也不應被視為已支援的資料範圍。
 - `get_tender_detail` 依賴政府電子採購網即時明細頁；舊案下架、網站維護或限流時，工具可能回傳錯誤，應稍後重試。
 - GitHub Pages 看板是提交時的靜態 snapshot，不等於 MCP／SQLite 即時查詢；自動同步與 last-known-good 發布屬後續 P1。
 - HTTP server 預設沒有 authentication；公開暴露前必須自行配置網路層存取控制。

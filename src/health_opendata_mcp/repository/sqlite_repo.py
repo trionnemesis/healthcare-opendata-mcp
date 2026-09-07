@@ -20,6 +20,7 @@ from health_opendata_mcp.contracts import (
     ColumnSpec,
     DatasetMeta,
     DatasetNotFoundError,
+    DatasetStatus,
     NormalizedBatch,
     QueryResult,
     RunStatus,
@@ -188,6 +189,49 @@ class SqliteRepository:
             if meta:
                 result.append(meta)
         return result
+
+    async def dataset_status(self, dataset_id: str) -> DatasetStatus | None:
+        """單一 dataset 的新鮮度 —— 不存在於白名單時回 None。"""
+        async with aiosqlite.connect(self._db_path) as db:
+            cur = await db.execute(
+                "SELECT last_fetched_at FROM datasets WHERE id = ?", (dataset_id,)
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            return await self._status(db, dataset_id, row[0])
+
+    async def list_dataset_status(self) -> list[DatasetStatus]:
+        async with aiosqlite.connect(self._db_path) as db:
+            cur = await db.execute(
+                "SELECT id, last_fetched_at FROM datasets ORDER BY id"
+            )
+            rows = await cur.fetchall()
+            return [await self._status(db, r[0], r[1]) for r in rows]
+
+    async def _status(
+        self, db: aiosqlite.Connection, dataset_id: str, fetched_at: str | None
+    ) -> DatasetStatus:
+        table = self.materialized_table(dataset_id)
+        cur = await db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        )
+        # 物化表由首次成功 upsert 建立;沒有表就是「從未同步成功」,
+        # 此時 row_count 保持 None,不折成 0(見 DatasetStatus docstring)。
+        count: int | None = None
+        if await cur.fetchone() is not None:
+            # 表名來自 datasets 白名單經 materialized_table() 正規化,
+            # 非使用者原始輸入;無可參數化表名的 SQLite 語法。
+            cur = await db.execute(f'SELECT COUNT(*) FROM "{table}"')  # nosec B608
+            count = (await cur.fetchone())[0]  # type: ignore[index]
+        return DatasetStatus(
+            dataset_id=dataset_id,
+            last_fetched_at=(
+                datetime.fromisoformat(fetched_at) if fetched_at else None
+            ),
+            row_count=count,
+        )
 
     async def query_rows(
         self,

@@ -40,3 +40,22 @@ Feature: 資料來源註冊與探索
     When 我對 nhi-opendata 來源執行 discover
     Then ResourceRef 清單應包含 dataset id 為 nhi-clinic 的 CSV 資源
     And 其 natural key 應為 醫事機構代碼
+
+  # 2026-09-07 擴充:資料集目錄(catalog)—— 讓「新增政府開放資料」從改 code
+  # 變成加一筆帶出處的宣告式資料,並以驗證閘門擋住未實查就啟用。
+  Scenario: 未驗證的資料集不得啟用
+    Given 一筆 catalog entry 標記 enabled 但沒有填 verified_at
+    When 我驗證 catalog
+    Then 應拋出 CatalogError 並指出缺少 verified_at
+    And 尚未驗證的候選 entry 可以存在,但必須 enabled=false
+
+  Scenario: catalog 的下載位址限定官方網域
+    Given 一筆 catalog entry 的下載 URL host 不在官方白名單
+    When 我驗證 catalog
+    Then 應拋出 CatalogError,不得對該主機發出請求
+
+  Scenario: 目錄含啟用的靜態 CSV 資料集時應組出 StaticCsvAdapter
+    Given catalog 中有一筆 enabled 且 kind 為 static_csv 的資料集
+    When 我組裝 hcmcp-sync 的來源清單
+    Then 清單應包含 StaticCsvAdapter
+    And 某一種 adapter 沒有任何 enabled entry 時不應被建立
