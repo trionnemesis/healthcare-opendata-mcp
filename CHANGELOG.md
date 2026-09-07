@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.7.1] - 2026-09-07
+
+### Added
+- **`scripts/verify_catalog_sources.py`(issue #25 Slice 2)**:對 catalog entry 的官方端點
+  實查,輸出可貼進 `catalog.py` 的 `verified_at` / `verified_note` 素材。
+  把「實查」從人工看網頁寫心得,變成可重跑、只輸出**可觀察事實**的程序:
+  HTTP status、content-type、byte size、列數、欄位名、natural key 欄位是否存在、
+  相異鍵數、無鍵列數。
+  - **只讀**:永遠不修改 `catalog.py`、不翻 `enabled`。啟用仍是人工 review 後的 PR 編輯。
+  - **先驗證後請求**:entry 未通過 `validate_catalog()`(例如 host 不在
+    `OFFICIAL_HOSTS`)時,連請求都不發出。
+  - **欄位處理與 ingestion 一致**(strip + `column_renames`),否則報告出來的欄位名
+    不是實際會用的那組。
+  - **失敗一律明說**:非 200、空回應、只有 header、UTF-8 解不開、natural key 欄位不存在
+    都是失敗並保留已觀察到的事實;離開碼非零。不以 `errors="replace"` 掩蓋解碼問題。
+  - **回應大小上限**(預設 64 MiB):超過即中止,不截斷後假裝解析成功。
+  - 抓取例外帶上例外類別:`ProxyError: 403 Forbidden`(本地 egress 政策)與上游限流的
+    403 都顯示同一句話,分不出來就會誤判資料源已失效。
+  - 第二個用途是**上游漂移檢查**:`--enabled-only` 對已啟用的資料集重跑,欄位或
+    natural key 不再成立時離開碼非零。
+- **`.github/workflows/verify-catalog.yml`**:`workflow_dispatch` 手動觸發上述 script。
+  **刻意不加 `schedule`** —— 定期對官方端點發流量是持續性外部負載,屬維運決策,
+  留給維護者拍板。
+
+### Verified
+- 全套件 **220 tests 通過**(修改前 203,新增 17:成功路徑事實 3、失敗路徑 6、
+  白名單先於請求 1、大小上限 2、note 產生 2、entry 選取 3)。
+- `bandit -r src scripts -ll`:Medium 0(與修改前相同)。
+- 成功路徑以注入 fetcher 的 fixture 驗證;失敗路徑以本環境實際的 proxy 403 驗證
+  (離開碼 1、三筆 entry 皆標示 `ProxyError: 403 Forbidden`)。
+- **未驗證事項(如實記錄)**:本次 session 的 egress 政策拒絕全部五個官方 host
+  (`info.nhi.gov.tw`、`data.gov.tw`、`www.mohw.gov.tw`、`dep.mohw.gov.tw`、
+  `www.nhi.gov.tw`,CONNECT 皆回 403),因此 **Slice 2 的實查本身尚未執行**,
+  candidate 仍為 `enabled=False`。本次交付的是讓實查可被執行且結果可稽核的工具,
+  不是實查結果。
+
 ## [0.7.0] - 2026-09-07
 
 ### Added

@@ -167,6 +167,24 @@ HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp
 
 目前目錄中的候選（**尚未實查，不會被同步**）：`nhi-hospital-district`（健保特約醫事機構－地區醫院）、`nhi-hospital-bed-ratio`（全民健保特約醫院之保險病床比率）。兩者的 `rId` 取自本 repository 既有測試，沒有實查日期紀錄，因此維持停用。
 
+第 2 步的實查由 [`scripts/verify_catalog_sources.py`](scripts/verify_catalog_sources.py) 執行 —— 它只輸出可觀察的事實（HTTP status、列數、欄位名、natural key 是否存在與是否唯一），並產生可貼進 `catalog.py` 的 `verified_at` / `verified_note`：
+
+```bash
+.venv/bin/python scripts/verify_catalog_sources.py --only nhi-clinic
+```
+
+```text
+[OK  ] nhi-clinic  (enabled=True)
+       url: https://info.nhi.gov.tw/api/iode0000s01/Dataset?rId=A21030000I-D21004-009
+       HTTP 200 · text/csv; charset=utf-8 · ... bytes · 24695 列 · 29 欄
+       natural key 醫事機構代碼 · 相異 24695 · 無鍵列 0
+       建議填入 catalog.py：
+           verified_at="2026-09-07",
+           verified_note="實查 2026-09-07:HTTP 200；...",
+```
+
+該 script **只讀**：不會修改 `catalog.py`，也不會翻 `enabled`；啟用仍是人工 review 後的 PR 編輯。`--enabled-only` 可作為上游漂移檢查（欄位或 natural key 不再成立時離開碼非零）。若本機不便連外，可用 GitHub Actions 的 `Verify catalog sources` workflow 手動觸發（`workflow_dispatch`，未排程）。
+
 ### MCP tools
 
 | Tool | Purpose |
@@ -247,7 +265,7 @@ GKE 架構、Workload Identity、CronJob、GCS DB artifact 與 Kubernetes manife
 .venv/bin/python -m pip_audit --skip-editable # 依賴弱點掃描
 ```
 
-CI（`.github/workflows/ci.yml`）在 push 與 pull request 跑相同三項：pytest（Python 3.11 / 3.12）、bandit、pip-audit。
+CI（`.github/workflows/ci.yml`）在 push 與 pull request 跑相同三項：pytest（Python 3.11 / 3.12）、bandit、pip-audit。另有 `verify-catalog.yml`，僅手動觸發（`workflow_dispatch`），用於對官方端點實查；刻意未排程，避免對官方來源產生持續性流量。
 
 主要程式分層如下：
 
@@ -273,6 +291,7 @@ src/health_opendata_mcp/
 | `scripts/export_board_data.py` | 從真實 SQLite 原子匯出 versioned `current.json` 與預渲染看板摘要；超過 5 MiB 時縮限明細 |
 | `scripts/verify_dashboard.py` | 在 Pages 上傳前驗證 snapshot schema、大小、安全 DOM 路徑、連結與 artifact 邊界 |
 | `scripts/prune_local_db.py` | 清除超出目前同步範圍的舊資料（預設 dry-run，`--apply` 才寫入） |
+| `scripts/verify_catalog_sources.py` | 對 catalog 的官方端點實查，輸出 `verified_at` / `verified_note` 素材與上游漂移檢查（只讀，不改 `catalog.py`） |
 
 `enrich_bid_deadline.py` 的候選條件為：`announcement_type='招標公告'`、`date` 在區間內、`bid_deadline` 為空、標題屬 IT 類，且同 `job_number` 尚無決標公告。決標與招標是兩筆獨立 record，只看招標那筆看不出案子已結束，因此另行比對決標的 `job_number` 集合，避免已決標的舊案佔用有限的明細頁請求額度、排擠仍可投標的新案。
 
