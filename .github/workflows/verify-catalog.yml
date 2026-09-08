@@ -37,7 +37,18 @@ jobs:
       # 本 script 只讀:不寫 DB、不改 catalog.py、不翻 enabled。
       # 輸出的 verified_at / verified_note 需人工 review 後以 PR 填入。
       - name: Probe catalog sources
+        # 輸入經 env 傳遞,不直接展開進 run:。`${{ }}` 是在 shell 執行前
+        # 由 Actions 做文字替換,自由文字的 `only` 若直接展開等同拼進腳本
+        # (CWE-94/CWE-78)。改以加引號的變數引用,shell 只當它是一個字串。
+        env:
+          ONLY: ${{ inputs.only }}
+          ENABLED_ONLY: ${{ inputs.enabled_only }}
         run: |
-          python scripts/verify_catalog_sources.py \
-            ${{ inputs.only && format('--only {0}', inputs.only) || '' }} \
-            ${{ inputs.enabled_only && '--enabled-only' || '' }}
+          args=()
+          if [ -n "$ONLY" ]; then
+            args+=(--only "$ONLY")
+          fi
+          if [ "$ENABLED_ONLY" = "true" ]; then
+            args+=(--enabled-only)
+          fi
+          python scripts/verify_catalog_sources.py "${args[@]}"
