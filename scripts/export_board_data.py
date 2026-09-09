@@ -20,12 +20,48 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
-from health_opendata_mcp.catalog import enabled_entries
+from health_opendata_mcp.catalog import UPDATE_CADENCES, enabled_entries
 
 SCHEMA_VERSION = "1.0"
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_DETAIL_LIMIT = 1_000
+# 非 catalog 驅動的資料集門檻。PCC 是半月檔(每月兩次,約 15 天一輪),
+# 21 天 ≈ 1.4 輪;此值沿用自 P0,刻意維持不變以免改動既有頁面的狀態判定。
 DEFAULT_STALE_AFTER_DAYS = 21
+NON_CATALOG_STALE_AFTER_DAYS = {"pcc-tender": DEFAULT_STALE_AFTER_DAYS}
+
+# 每個 cadence 的名目更新週期(天)。這是對官方更新節奏的描述,不是政策。
+_CADENCE_CYCLE_DAYS = {
+    "daily": 1,
+    "weekly": 7,
+    "monthly": 30,
+    "quarterly": 91,
+    "yearly": 365,
+}
+# 沒有週期可推導者 —— 沒有判定依據,永不判為 stale。
+_CADENCE_WITHOUT_CYCLE = frozenset({"irregular", "unknown"})
+
+# catalog 新增了 cadence 卻沒有同時決定它的門檻政策,在此就失敗。
+# 若讓它靜默落到「無週期」,一個真的有節奏的資料集會永遠不被判為過期。
+_uncovered = UPDATE_CADENCES - set(_CADENCE_CYCLE_DAYS) - _CADENCE_WITHOUT_CYCLE
+if _uncovered:
+    raise RuntimeError(
+        f"catalog 新增了 update_cadence 但未定門檻政策: {sorted(_uncovered)}"
+    )
+
+# 「多久沒更新算過期」是**政策**,而 catalog 的 update_cadence 是**事實**。
+# 規則:門檻 = 2 × 更新週期。漏掉一次更新是時序造成的常態;漏掉兩次代表出事了。
+CADENCE_STALE_AFTER_DAYS: dict[str, int | None] = {
+    **{c: days * 2 for c, days in _CADENCE_CYCLE_DAYS.items()},
+    **{c: None for c in _CADENCE_WITHOUT_CYCLE},
+}
+
+FRESHNESS_FRESH = "fresh"
+FRESHNESS_STALE = "stale"
+# 「沒有新鮮度契約」與「還很新」是兩件事。unknown 必須能在 UI 上被看見,
+# 否則無契約的資料集會被誤讀成已驗證為最新。
+FRESHNESS_UNKNOWN = "unknown"
+VALID_FRESHNESS = {FRESHNESS_FRESH, FRESHNESS_STALE, FRESHNESS_UNKNOWN}
 VALID_STATES = {"fresh", "stale", "degraded", "empty"}
 
 # PCC 不是 catalog 驅動(半月 XML + 關鍵字過濾,見 catalog.py),故其出處在此明列。
@@ -140,8 +176,49 @@ def published_dataset_ids(con: sqlite3.Connection) -> list[str]:
     return sorted(set(in_db) | set(enabled) | {"pcc-tender"})
 
 
+def stale_after_days_for(
+    dataset_id: str,
+    update_cadence: str | None,
+    *,
+    non_catalog_default: int = DEFAULT_STALE_AFTER_DAYS,
+) -> int | None:
+    """該資料集的過期門檻(天)。None = 沒有契約可依據,不得判為 stale。
+
+    catalog 驅動者由 update_cadence 推導;非 catalog 驅動者(PCC)沿用明列的門檻。
+    兩者都不在名單上時回 None —— 寧可說「不知道」也不要套一個沒有根據的數字。
+    """
+    if dataset_id in NON_CATALOG_STALE_AFTER_DAYS:
+        return non_catalog_default
+    if update_cadence is None:
+        return None
+    return CADENCE_STALE_AFTER_DAYS.get(update_cadence)
+
+
+def freshness_for(
+    last_fetched_at: str | None,
+    stale_after_days: int | None,
+    generated_at: dt.datetime,
+) -> str:
+    """逐資料集的新鮮度。無門檻或無同步時間一律 unknown,永不冒充 fresh。"""
+    if stale_after_days is None or not last_fetched_at:
+        return FRESHNESS_UNKNOWN
+    try:
+        fetched = dt.datetime.fromisoformat(last_fetched_at.replace("Z", "+00:00"))
+        if fetched.tzinfo is None:
+            raise ValueError("missing timezone")
+    except (TypeError, ValueError):
+        # 時間戳壞掉就是沒有依據,不猜。全域狀態另有 degraded 判定會抓到。
+        return FRESHNESS_UNKNOWN
+    age_days = (generated_at - fetched.astimezone(dt.timezone.utc)).days
+    return FRESHNESS_STALE if age_days > stale_after_days else FRESHNESS_FRESH
+
+
 def build_datasets(
-    con: sqlite3.Connection, *, pcc_row_count: int
+    con: sqlite3.Connection,
+    *,
+    pcc_row_count: int,
+    generated_at: dt.datetime,
+    non_catalog_stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
 ) -> dict[str, dict[str, Any]]:
     """由 catalog(已啟用者)∪ DB 產生資料集矩陣 —— 不硬編碼 dataset 名單。
 
@@ -179,6 +256,14 @@ def build_datasets(
             "update_cadence": entry.update_cadence if entry else None,
             "verified_at": entry.verified_at if entry else None,
         }
+        cadence = datasets[snapshot_key(dataset_id)]["update_cadence"]
+        threshold = stale_after_days_for(
+            dataset_id, cadence, non_catalog_default=non_catalog_stale_after_days
+        )
+        datasets[snapshot_key(dataset_id)]["stale_after_days"] = threshold
+        datasets[snapshot_key(dataset_id)]["freshness"] = freshness_for(
+            meta["last_fetched_at"], threshold, generated_at
+        )
     return datasets
 
 
@@ -237,8 +322,13 @@ def _derive_status(
     source_max_date: str | None,
     source_runs: list[tuple[str, str | None, str | None, bool]],
     generated_at: dt.datetime,
-    stale_after_days: int,
+    datasets: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    """全域狀態。stale 由逐資料集的 freshness 匯總,不再用單一全域門檻。
+
+    freshness=unknown(無 cadence 契約或未同步)**不會**拉低狀態 —— 沒有依據
+    就不該宣稱過期,那個狀態在資料集矩陣裡本來就看得見。
+    """
     if row_count == 0:
         return {
             "state": "empty",
@@ -281,24 +371,35 @@ def _derive_status(
             if finished_at.tzinfo is None:
                 raise ValueError("missing timezone")
             finished_times.append(finished_at.astimezone(dt.timezone.utc))
-        age_days = (generated_at - min(finished_times)).days
-        if age_days < 0:
+        if finished_times and (generated_at - min(finished_times)).days < 0:
             return {
                 "state": "degraded",
                 "source_max_date": source_max_date,
                 "message": "來源同步完成時間晚於快照時間，請檢查資料時鐘。",
-            }
-        if age_days > stale_after_days:
-            return {
-                "state": "stale",
-                "source_max_date": source_max_date,
-                "message": f"最近一次來源成功同步已超過 {stale_after_days} 天。",
             }
     except (TypeError, ValueError):
         return {
             "state": "degraded",
             "source_max_date": source_max_date,
             "message": "來源同步完成時間格式無法驗證；目前顯示可驗證的既有資料。",
+        }
+
+    stale = sorted(
+        (key, meta)
+        for key, meta in datasets.items()
+        if meta.get("freshness") == FRESHNESS_STALE
+    )
+    if stale:
+        detail = "、".join(
+            f"{key}（逾 {meta['stale_after_days']} 天）" for key, meta in stale
+        )
+        return {
+            "state": "stale",
+            "source_max_date": source_max_date,
+            "message": (
+                f"下列資料集已超過依更新頻率推導的門檻：{detail}。"
+                "門檻為 2 倍更新週期；未登錄更新頻率者不納入判定。"
+            ),
         }
     labels = "／".join(name for name, *_ in source_runs) or "已登錄"
     return {
@@ -368,7 +469,12 @@ def build_snapshot(
     source_max_date = max(dates) if dates else None
     source_min_date = min(dates) if dates else None
     dataset_ids = published_dataset_ids(con)
-    datasets = build_datasets(con, pcc_row_count=total_count)
+    datasets = build_datasets(
+        con,
+        pcc_row_count=total_count,
+        generated_at=generated_at,
+        non_catalog_stale_after_days=stale_after_days,
+    )
 
     type_counts = Counter(
         row["announcement_type"]
@@ -383,7 +489,7 @@ def build_snapshot(
         source_max_date=source_max_date,
         source_runs=status_sources(con, dataset_ids),
         generated_at=generated_at,
-        stale_after_days=stale_after_days,
+        datasets=datasets,
     )
 
     base: dict[str, Any] = {
@@ -562,7 +668,15 @@ def main() -> None:
     parser.add_argument("--generated-at", help="可重建測試用 ISO-8601 時間（需時區）")
     parser.add_argument("--detail-limit", type=int, default=DEFAULT_DETAIL_LIMIT)
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
-    parser.add_argument("--stale-after-days", type=int, default=DEFAULT_STALE_AFTER_DAYS)
+    parser.add_argument(
+        "--stale-after-days",
+        type=int,
+        default=DEFAULT_STALE_AFTER_DAYS,
+        help=(
+            "非 catalog 驅動資料集(PCC)的過期門檻天數。catalog 驅動者一律由"
+            " update_cadence 推導(2 倍更新週期),不受本旗標影響"
+        ),
+    )
     args = parser.parse_args()
 
     payload = export_snapshot(

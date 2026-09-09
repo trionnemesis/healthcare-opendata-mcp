@@ -126,7 +126,7 @@
     if (ids.length === 0) {
       const row = document.createElement("tr");
       const message = cell("快照未包含任何資料集。");
-      message.colSpan = 7;
+      message.colSpan = 8;
       row.append(message);
       body.append(row);
       return;
@@ -149,9 +149,26 @@
       row.append(cell(unknownOr(dataset.last_fetched_at)));
       row.append(cell(unknownOr(dataset.latest_run_status)));
       row.append(cell(unknownOr(dataset.update_cadence)));
+      row.append(cell(freshnessLabel(dataset)));
       row.append(cell(unknownOr(dataset.verified_at)));
       row.append(cell(unknownOr(dataset.license)));
       body.append(row);
+    }
+  }
+
+  // 狀態不只靠顏色:三種新鮮度都以文字呈現,並在過期時附上依據的門檻。
+  function freshnessLabel(dataset) {
+    switch (dataset.freshness) {
+      case "fresh":
+        return "最新";
+      case "stale":
+        return dataset.stale_after_days
+          ? `過期（逾 ${formatCount(dataset.stale_after_days)} 天）`
+          : "過期";
+      case "unknown":
+        return "無契約";
+      default:
+        return "—";
     }
   }
 

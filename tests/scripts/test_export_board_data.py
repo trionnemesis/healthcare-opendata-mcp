@@ -174,16 +174,26 @@ def test_partial_source_run_is_degraded_without_publishing_error(tmp_path: Path)
 
 
 def test_old_successful_sync_is_stale(tmp_path: Path) -> None:
+    """過期判定的基準是 datasets.last_fetched_at,不是 ingestion_runs.finished_at。
+
+    run 是 per-source 的,且 pipeline 對單一 ref 失敗有容錯 —— 一個 SUCCEEDED
+    的 run 底下可能有某個 dataset 根本沒更新到。per-dataset 的 last_fetched_at
+    才是「這份資料多舊」的答案,故兩者都往回撥才是一致的情境。
+    """
     con = make_db(tmp_path / "stale.db", sample_rows())
     con.execute(
         "UPDATE ingestion_runs SET finished_at = '2026-07-01T00:00:00+00:00'"
     )
+    con.execute("UPDATE datasets SET last_fetched_at = '2026-07-01T00:00:00+00:00'")
     con.commit()
     try:
         payload = build_snapshot(con, generated_at=GENERATED_AT, stale_after_days=21)
     finally:
         con.close()
     assert payload["status"]["state"] == "stale"
+    # pcc-tender 非 catalog 驅動,沿用明列門檻
+    assert payload["datasets"]["pcc_tender"]["stale_after_days"] == 21
+    assert payload["datasets"]["pcc_tender"]["freshness"] == "stale"
 
 
 def test_complete_projection_is_measured_before_rows_are_bounded(tmp_path: Path) -> None:
@@ -336,3 +346,133 @@ def test_committed_dashboard_matches_template_render() -> None:
     template = Path("scripts/templates/dashboard.html").read_text(encoding="utf-8")
     committed = Path("docs/dashboard/index.html").read_text(encoding="utf-8")
     assert render_dashboard(template, payload) == committed
+
+
+class TestFreshnessFromCadence:
+    """過期門檻由 catalog 的 update_cadence 推導,不再是全域猜測值(#31 第 2 項)。
+
+    #22 明文要求「不自行推論 healthy／stale 門檻⋯需先建立每個 source 的正式
+    cadence 契約」。該契約自 #26 起存在,本組測試釘住它真的被拿來用。
+    """
+
+    def test_threshold_is_two_update_cycles(self):
+        from export_board_data import CADENCE_STALE_AFTER_DAYS
+
+        assert CADENCE_STALE_AFTER_DAYS["daily"] == 2
+        assert CADENCE_STALE_AFTER_DAYS["weekly"] == 14
+        assert CADENCE_STALE_AFTER_DAYS["monthly"] == 60
+        assert CADENCE_STALE_AFTER_DAYS["quarterly"] == 182
+        assert CADENCE_STALE_AFTER_DAYS["yearly"] == 730
+
+    def test_cadence_without_a_cycle_has_no_threshold(self):
+        from export_board_data import CADENCE_STALE_AFTER_DAYS
+
+        assert CADENCE_STALE_AFTER_DAYS["irregular"] is None
+        assert CADENCE_STALE_AFTER_DAYS["unknown"] is None
+
+    def test_every_catalog_cadence_has_a_policy(self):
+        """catalog 新增 cadence 而未定政策時,import 就該失敗而不是靜默放行。"""
+        from export_board_data import CADENCE_STALE_AFTER_DAYS
+        from health_opendata_mcp.catalog import UPDATE_CADENCES
+
+        assert set(CADENCE_STALE_AFTER_DAYS) == UPDATE_CADENCES
+
+    def test_non_catalog_dataset_keeps_its_explicit_threshold(self):
+        from export_board_data import stale_after_days_for
+
+        assert stale_after_days_for("pcc-tender", None) == 21
+        # 旗標只影響非 catalog 驅動者
+        assert stale_after_days_for("pcc-tender", None, non_catalog_default=5) == 5
+
+    def test_catalog_dataset_ignores_the_non_catalog_flag(self):
+        from export_board_data import stale_after_days_for
+
+        assert stale_after_days_for("nhi-clinic", "daily", non_catalog_default=999) == 2
+
+    def test_dataset_without_a_cadence_contract_has_no_threshold(self):
+        from export_board_data import stale_after_days_for
+
+        assert stale_after_days_for("whatever", None) is None
+        assert stale_after_days_for("whatever", "unknown") is None
+        assert stale_after_days_for("whatever", "irregular") is None
+
+
+class TestFreshnessFor:
+    def test_within_threshold_is_fresh(self):
+        from export_board_data import freshness_for
+
+        assert freshness_for("2026-09-01T00:00:00+00:00", 2, GENERATED_AT) == "fresh"
+
+    def test_beyond_threshold_is_stale(self):
+        from export_board_data import freshness_for
+
+        assert freshness_for("2026-08-20T00:00:00+00:00", 2, GENERATED_AT) == "stale"
+
+    def test_no_threshold_is_never_stale_however_old(self):
+        """沒有 cadence 契約就沒有判定依據 —— 再舊也不得宣稱過期。"""
+        from export_board_data import freshness_for
+
+        assert freshness_for("2000-01-01T00:00:00+00:00", None, GENERATED_AT) == "unknown"
+
+    def test_missing_fetch_time_is_unknown(self):
+        from export_board_data import freshness_for
+
+        assert freshness_for(None, 2, GENERATED_AT) == "unknown"
+
+    def test_malformed_fetch_time_is_unknown_not_fresh(self):
+        from export_board_data import freshness_for
+
+        assert freshness_for("not-a-timestamp", 2, GENERATED_AT) == "unknown"
+        # 無時區的時間戳無法比較,同樣沒有依據
+        assert freshness_for("2026-09-01T00:00:00", 2, GENERATED_AT) == "unknown"
+
+
+class TestStatusRollup:
+    def _db(self, tmp_path, name="rollup.db"):
+        return make_db(tmp_path / name, sample_rows())
+
+    def test_catalog_dataset_past_its_own_threshold_makes_the_page_stale(self, tmp_path):
+        con = self._db(tmp_path)
+        # nhi-clinic 的 cadence 是 daily → 門檻 2 天;往回撥 5 天
+        con.execute(
+            "UPDATE datasets SET last_fetched_at = '2026-08-27T00:00:00+00:00'"
+            " WHERE id = 'nhi-clinic'"
+        )
+        con.commit()
+        payload = build_snapshot(con, generated_at=GENERATED_AT)
+        assert payload["datasets"]["nhi_clinic"]["stale_after_days"] == 2
+        assert payload["datasets"]["nhi_clinic"]["freshness"] == "stale"
+        assert payload["status"]["state"] == "stale"
+        # 訊息要指名是哪個資料集、依據什麼門檻
+        assert "nhi_clinic" in payload["status"]["message"]
+        assert "2 天" in payload["status"]["message"]
+        # 全域門檻 21 天不再是判定依據:5 天 < 21 卻仍判為過期
+        assert payload["datasets"]["pcc_tender"]["freshness"] == "fresh"
+
+    def test_dataset_without_a_contract_never_drags_the_page_stale(self, tmp_path):
+        con = self._db(tmp_path, "ghost.db")
+        con.execute(
+            "INSERT INTO datasets (id, source_id, title, schema_json, last_fetched_at)"
+            " VALUES ('ghost-ds', 'nhi-opendata', 'Ghost', '[]',"
+            " '2000-01-01T00:00:00+00:00')"
+        )
+        con.commit()
+        payload = build_snapshot(con, generated_at=GENERATED_AT)
+        ghost = payload["datasets"]["ghost_ds"]
+        assert ghost["stale_after_days"] is None
+        assert ghost["freshness"] == "unknown"
+        assert payload["status"]["state"] == "fresh"
+
+    def test_degraded_still_takes_precedence_over_stale(self, tmp_path):
+        con = self._db(tmp_path, "degraded.db")
+        con.execute("UPDATE ingestion_runs SET status = 'FAILED'")
+        con.execute("UPDATE datasets SET last_fetched_at = '2026-01-01T00:00:00+00:00'")
+        con.commit()
+        payload = build_snapshot(con, generated_at=GENERATED_AT)
+        assert payload["status"]["state"] == "degraded"
+
+    def test_freshness_is_published_for_every_dataset(self, tmp_path):
+        payload = build_snapshot(self._db(tmp_path, "all.db"), generated_at=GENERATED_AT)
+        for key, meta in payload["datasets"].items():
+            assert meta["freshness"] in {"fresh", "stale", "unknown"}, key
+            assert "stale_after_days" in meta, key

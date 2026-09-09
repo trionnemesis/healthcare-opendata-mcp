@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.8.1] - 2026-09-09
+
+### Changed
+- **過期門檻改由 catalog 的 `update_cadence` 推導(issue #31 第 2 項)**:先前
+  `export_board_data.py` 用 `DEFAULT_STALE_AFTER_DAYS = 21` 對所有來源一體適用 ——
+  一份每日更新的資料集停更 20 天顯然出事了,一份年度更新的資料集停更 20 天完全正常,
+  同一個門檻不可能同時對兩者成立。這與 #22 明文寫下的「不自行推論 healthy／stale
+  門檻⋯需先建立每個 source 的正式 cadence 契約」直接牴觸。
+  該契約自 #26 起存在(catalog 每筆 entry 的 `update_cadence`),本次讓它真的被用上。
+  - **規則:門檻 = 2 × 更新週期**。漏掉一次更新是時序造成的常態;漏掉兩次代表出事了。
+    `daily`→2、`weekly`→14、`monthly`→60、`quarterly`→182、`yearly`→730 天。
+  - `irregular` / `unknown` **沒有週期可推導 → 沒有門檻,永遠不會被判為 stale**。
+  - **catalog 新增 cadence 而未定政策時,`export_board_data` 在 import 時就失敗**。
+    靜默落到「無週期」會讓一個真的有節奏的資料集永遠不被判為過期,比直接壞掉更糟。
+  - 事實與政策分離:`update_cadence` 是事實(住 `catalog.py`),門檻天數是政策
+    (住 `export_board_data.py`)。混在一起會讓資料集出處與看板呈現偏好綁死。
+- **判定基準改為 per-dataset 的 `datasets.last_fetched_at`**,不再是 per-source 的
+  `min(ingestion_runs.finished_at)`。`ingestion/pipeline.py` 對單一 ref 失敗有容錯,
+  **一個 SUCCEEDED 的 run 底下可能有某個 dataset 根本沒更新到** —— 用 run 的時間會
+  把這種情況掩蓋掉。`ingestion_runs` 的時間戳仍用於 degraded 判定。
+- 全域 `stale` 改由逐資料集的 `freshness` 匯總:任一資料集過期則整頁過期,訊息指名
+  是哪些資料集、依據什麼門檻。`freshness=unknown` **不參與**匯總。
+- `--stale-after-days` 旗標的語意收斂為「非 catalog 驅動資料集(PCC)的門檻」,
+  catalog 驅動者不受其影響;`--help` 已載明。
+
+### Added
+- 快照的每筆資料集新增兩個**選填**欄位(`schema_version` 維持 `"1.0"`,舊快照仍合法):
+  - `stale_after_days`: `integer | null`
+  - `freshness`: `enum ["fresh", "stale", "unknown"]`
+- `NON_CATALOG_STALE_AFTER_DAYS` 明列非 catalog 驅動來源的門檻(目前只有 PCC 的
+  21 天,沿用 P0),與既有的 `NON_CATALOG_SOURCE_URLS` 同一個模式。
+- 看板資料集矩陣新增「新鮮度」欄:最新 / 過期(逾 N 天) / 無契約。
+  **三種狀態都以文字呈現,不靠顏色區分**;「無契約」必須看得見 —— 渲染成空白或與
+  「最新」同樣式,會讓沒有新鮮度契約的資料集被讀成已驗證為最新。
+- `docs/superpowers/specs/2026-09-09-freshness-from-cadence.md`。
+
+### Verified
+- 全套件 **252 tests 通過**(修改前 237,新增 15)。
+- `bandit -r src scripts -ll`:Medium 0。
+- `scripts/verify_dashboard.py --site docs` 通過;委入的 Pages artifact 未退化。
+- `test_old_successful_sync_is_stale` 的 fixture 一併修正:原本只往回撥
+  `ingestion_runs.finished_at`、卻留著新的 `datasets.last_fetched_at`,在新語意下
+  是不一致的情境。改為兩者都往回撥,並補上門檻與 freshness 的斷言。
+
+### 未處理(如實記錄)
+- `docs/data/current.json` 未重新產生(本環境無真實 DB)。新欄位為選填,舊快照仍
+  合法;矩陣的新鮮度欄位會顯示「—」直到下一次真實 export。
+
 ## [0.8.0] - 2026-09-07
 
 ### Changed

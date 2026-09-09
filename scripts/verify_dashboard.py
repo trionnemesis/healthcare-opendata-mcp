@@ -13,6 +13,9 @@ MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024
 # datasets 的 key 由 dataset_id 正規化而來(見 export_board_data.snapshot_key)
 _DATASET_KEY_RE = re.compile(r"[a-z0-9_]+")
 _DATASET_FIELDS = {"row_count", "last_fetched_at", "source_url", "license"}
+# freshness 為 additive 欄位:舊快照沒有它仍合法,但有的話必須是這三個值之一。
+# 放行任意字串等於讓前端渲染一個沒人定義過的狀態。
+_VALID_FRESHNESS = {"fresh", "stale", "unknown"}
 VALID_STATES = {"fresh", "stale", "degraded", "empty"}
 ROW_FIELDS = {
     "date",
@@ -97,6 +100,13 @@ def validate_snapshot(payload: Any) -> None:
         if not _DATASET_FIELDS.issubset(dataset):
             missing = sorted(_DATASET_FIELDS - set(dataset))
             raise ValueError(f"dataset {key} missing fields: {missing}")
+        if "freshness" in dataset and dataset["freshness"] not in _VALID_FRESHNESS:
+            raise ValueError(f"dataset {key} has an unknown freshness value")
+        threshold = dataset.get("stale_after_days")
+        if threshold is not None and (
+            not isinstance(threshold, int) or isinstance(threshold, bool)
+        ):
+            raise ValueError(f"dataset {key} stale_after_days must be an integer or null")
     rows = payload["rows"]
     if not isinstance(rows, list):
         raise ValueError("rows must be an array")
