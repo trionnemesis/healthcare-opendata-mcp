@@ -13,12 +13,17 @@ from pathlib import Path
 
 from health_opendata_mcp.adapters import (
     NhiApiAdapter,
+    NhiHealthcareFacilityAdapter,
     NhiDatasetSpec,
     PccTenderAdapter,
     StaticCsvAdapter,
     StaticCsvSpec,
 )
-from health_opendata_mcp.catalog import enabled_nhi_specs, enabled_static_specs
+from health_opendata_mcp.catalog import (
+    enabled_nhi_facility_specs,
+    enabled_nhi_specs,
+    enabled_static_specs,
+)
 from health_opendata_mcp.contracts import SourceAdapter
 from health_opendata_mcp.ingestion.pipeline import run_source
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
@@ -51,6 +56,7 @@ def ensure_db_dir(db_path: str) -> Path:
 # 新增資料集 = 加一筆帶出處的 entry,不必再改本檔。此處只保留投影後的
 # spec 清單,維持既有 import 路徑不變。
 NHI_DATASETS = enabled_nhi_specs()
+NHI_FACILITY_DATASETS = enabled_nhi_facility_specs()
 STATIC_CSV_DATASETS = enabled_static_specs()
 
 # 資訊勞務主題關鍵字 — 與看板 pcc-it-tender-board / 半月排程 SKILL 同步維護
@@ -72,6 +78,7 @@ def build_adapters(
     tender_months: int,
     *,
     nhi_specs: list[NhiDatasetSpec] | None = None,
+    facility_specs: list[NhiDatasetSpec] | None = None,
     static_specs: list[StaticCsvSpec] | None = None,
 ) -> list[SourceAdapter]:
     """依 catalog 組出本輪要跑的 adapter。
@@ -81,10 +88,14 @@ def build_adapters(
     spec 可注入(DI),測試不必動模組層狀態。
     """
     nhi = NHI_DATASETS if nhi_specs is None else nhi_specs
+    facility = NHI_FACILITY_DATASETS if facility_specs is None else facility_specs
     static = STATIC_CSV_DATASETS if static_specs is None else static_specs
     adapters: list[SourceAdapter] = []
     if nhi:
         adapters.append(NhiApiAdapter(nhi))
+    # 同一個 NHI 端點,但這批要走 facility adapter 的範圍篩選與衍生欄位。
+    if facility:
+        adapters.append(NhiHealthcareFacilityAdapter(facility))
     if static:
         adapters.append(StaticCsvAdapter(static))
     # 衛福部轄下機關 + 資訊勞務(IT 關鍵字)標案 — 看板/排程資料源。

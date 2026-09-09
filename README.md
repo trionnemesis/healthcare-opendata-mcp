@@ -150,6 +150,12 @@ HCMCP_DB=/path/to/hcmcp.db .venv/bin/hcmcp
 | `pcc-tender` | 衛生福利部轄下機關的資訊勞務相關標案 | [政府電子採購網](https://web.pcc.gov.tw/) | 半月 XML；明細欄位按需 enrich |
 | `nhi-clinic` | 健保特約醫事機構－診所 | [健保署資料開放平台](https://info.nhi.gov.tw/) | CSV API，每日更新 |
 
+候選（catalog 中 `enabled=false`，**尚未同步**，待對官方端點實查後啟用）：
+
+| Dataset | Scope | Official source | Update path |
+|---|---|---|---|
+| `nhi-healthcare-facility` | 部立／地方政府醫院、健保特約診所與衛生所 | [健保署資料開放平台](https://info.nhi.gov.tw/api/iode0000s01/Dataset?rId=A21030000I-D2100G-001) | CSV API，每日更新 |
+
 ### Dataset catalog
 
 要同步哪些政府開放資料，由 [`src/health_opendata_mcp/catalog.py`](src/health_opendata_mcp/catalog.py) 這份宣告式目錄決定 —— 不是散落在程式流程裡。每筆 entry 除了 resource id／URL，還攜帶**出處與驗證狀態**：更新頻率、官方說明頁、`verified_at`（何時對官方端點實查過）、`verified_note`（實查當下觀察到的事實）與 `enabled`。
@@ -227,6 +233,25 @@ query_rows(
     where="announcement_type='決標公告' AND date >= '2025-01-01'",
     group_by=["agency"],
     order_by="total DESC",
+    limit=50,
+)
+
+# nhi-healthcare-facility 目前為候選（catalog enabled=false），啟用後才有資料
+query_rows(
+    dataset_id="nhi-healthcare-facility",
+    columns=[
+        "醫事機構代碼",
+        "醫事機構名稱",
+        "facility_type",
+        "governing_level",
+        "classification_source",
+        "is_active",
+    ],
+    where=(
+        "facility_type='hospital' AND governing_level='mohw' "
+        "AND is_active=1"
+    ),
+    order_by="醫事機構名稱",
     limit=50,
 )
 ```
@@ -307,6 +332,10 @@ src/health_opendata_mcp/
 - `get_tender_detail` 依賴政府電子採購網即時明細頁；舊案下架、網站維護或限流時，工具可能回傳錯誤，應稍後重試。
 - GitHub Pages 看板是提交時的靜態 snapshot，不等於 MCP／SQLite 即時查詢；自動同步與 last-known-good 發布屬後續 P1。
 - HTTP server 預設沒有 authentication；公開暴露前必須自行配置網路層存取控制。
+- `nhi-healthcare-facility` 目前在 catalog 中為 `enabled=false`：adapter 與分類規則已併入且有測試覆蓋，但尚未對官方端點實查，因此不會被同步。啟用方式見下方 Development。
+- 啟用後 `nhi-clinic` 與 `nhi-healthcare-facility` 會有資料重疊（例如診所），這是正常行為；兩者各自保留原有用途。
+- `nhi-healthcare-facility` 僅納入 `特約類別` 1~3 且 `權屬別名稱` 在「部立及直轄市立醫院」與「縣市立醫院」，以及 `特約類別` 4（診所／衛生所）。
+- `governing_level` 的 `mohw` 由衛福部官方名冊與 NHI exact-name mapping 決定；衛生所與其餘市／縣立醫院標為 `local_government`，私人診所等無可靠主管層級者為 `unknown`。
 - 資料依官方來源更新節奏而變動；repository 只提交經欄位 allowlist、大小門檻與驗證的 Pages snapshot，不提交 SQLite 或原始同步資料。
 
 ## Related projects

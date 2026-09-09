@@ -38,6 +38,9 @@ class AdapterKind(enum.Enum):
     """entry 由哪個 adapter 消費。決定 r_id / urls 哪一組欄位有效。"""
 
     NHI_API = "nhi_api"
+    # 與 NHI_API 同一個端點與 r_id 形制,但由 NhiHealthcareFacilityAdapter 消費:
+    # 它在 normalize 時做需求範圍篩選並產出 facility_type 等衍生欄位。
+    NHI_FACILITY = "nhi_facility"
     STATIC_CSV = "static_csv"
 
 
@@ -113,11 +116,12 @@ def _validate_entry(entry: CatalogEntry) -> None:
             f"{eid}: update_cadence 未知 — {entry.update_cadence!r}"
         )
 
-    if entry.kind is AdapterKind.NHI_API:
+    if entry.kind in (AdapterKind.NHI_API, AdapterKind.NHI_FACILITY):
+        kind_name = entry.kind.value
         if not entry.r_id:
-            raise CatalogError(f"{eid}: kind=nhi_api 必須有 r_id")
+            raise CatalogError(f"{eid}: kind={kind_name} 必須有 r_id")
         if entry.urls:
-            raise CatalogError(f"{eid}: kind=nhi_api 不應有 urls")
+            raise CatalogError(f"{eid}: kind={kind_name} 不應有 urls")
         if not _R_ID_RE.match(entry.r_id):
             raise CatalogError(f"{eid}: r_id 格式不合法 — {entry.r_id!r}")
     else:
@@ -176,6 +180,22 @@ CATALOG: tuple[CatalogEntry, ...] = (
     ),
     # --- 以下為候選:值取自本 repo 既有測試,尚無官方端點實查紀錄 ---
     CatalogEntry(
+        dataset_id="nhi-healthcare-facility",
+        title="健保特約醫療院所名冊-需求範圍",
+        kind=AdapterKind.NHI_FACILITY,
+        r_id="A21030000I-D2100G-001",
+        natural_key_columns=("醫事機構代碼",),
+        update_cadence="daily",
+        enabled=False,
+        verified_note=(
+            "候選:adapter 與分類規則已隨 PR #15 併入並有測試覆蓋,但本 session"
+            "的 egress policy 擋住 info.nhi.gov.tw(CONNECT 403),無法實查端點,"
+            "故不填 verified_at、維持 enabled=False。"
+            "啟用前請對官方端點實查 rId、筆數、欄位與更新頻率,把觀察到的事實"
+            "寫進本欄並填 verified_at。"
+        ),
+    ),
+    CatalogEntry(
         dataset_id="nhi-hospital-district",
         title="健保特約醫事機構-地區醫院",
         kind=AdapterKind.NHI_API,
@@ -228,6 +248,27 @@ def enabled_nhi_specs(
         )
         for e in enabled_entries(entries)
         if e.kind is AdapterKind.NHI_API
+    ]
+
+
+def enabled_nhi_facility_specs(
+    entries: tuple[CatalogEntry, ...] = CATALOG,
+) -> list[NhiDatasetSpec]:
+    """投影出由 NhiHealthcareFacilityAdapter 消費的 spec。
+
+    與 enabled_nhi_specs 同型別(都是 NhiDatasetSpec),差別只在消費它的
+    adapter —— facility adapter 會再做範圍篩選與衍生欄位。
+    """
+    return [
+        NhiDatasetSpec(
+            dataset_id=e.dataset_id,
+            r_id=e.r_id or "",
+            title=e.title,
+            natural_key_columns=e.natural_key_columns,
+            collection=e.collection,
+        )
+        for e in enabled_entries(entries)
+        if e.kind is AdapterKind.NHI_FACILITY
     ]
 
 
