@@ -1,4 +1,4 @@
-"""CLI — hcmcp-sync:同步衛福部資訊勞務標案 + 健保院所資料至 SQLite。
+"""CLI — hcmcp-sync:同步衛福部資訊勞務標案 + 診所資料至本地 SQLite。
 
 範圍縮小(2026-06-13):由「全機關標案 × 全醫療健保開放資料」收斂為
 衛生福利部轄下機關的「資訊勞務相關」標案 + 診所資料,案量小才能逐案
@@ -13,10 +13,18 @@ from pathlib import Path
 
 from health_opendata_mcp.adapters import (
     NhiApiAdapter,
-    NhiDatasetSpec,
     NhiHealthcareFacilityAdapter,
+    NhiDatasetSpec,
     PccTenderAdapter,
+    StaticCsvAdapter,
+    StaticCsvSpec,
 )
+from health_opendata_mcp.catalog import (
+    enabled_nhi_facility_specs,
+    enabled_nhi_specs,
+    enabled_static_specs,
+)
+from health_opendata_mcp.contracts import SourceAdapter
 from health_opendata_mcp.ingestion.pipeline import run_source
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
@@ -27,18 +35,29 @@ def default_db_path() -> str:
     )
 
 
-# 診所(NHI 一級 API,約 24.5k 筆/每日更新);實查 2026-06-10 resource = D21004-009
-NHI_CLINIC_DATASET = NhiDatasetSpec(
-    dataset_id="nhi-clinic",
-    r_id="A21030000I-D21004-009",
-    title="健保特約醫事機構-診所",
-)
-NHI_HEALTHCARE_FACILITY_DATASET = NhiDatasetSpec(
-    dataset_id="nhi-healthcare-facility",
-    r_id="A21030000I-D2100G-001",
-    title="健保特約醫療院所名冊-需求範圍",
-)
-NHI_DATASETS = [NHI_CLINIC_DATASET, NHI_HEALTHCARE_FACILITY_DATASET]
+# DB 目錄權限的單一真實來源:sync(寫)與 server(讀)都經由此函式建目錄,
+# 兩處必須一致才有意義 —— 誰先跑就由誰決定權限。
+DB_DIR_MODE = 0o700
+
+
+def ensure_db_dir(db_path: str) -> Path:
+    """建立 DB 所在目錄,權限限制為 0o700 並回傳該目錄。
+
+    DB 目錄存放已抓取的開放資料與抓取軌跡;預設 umask 會讓它成為
+    0o755,多使用者主機上任何本機帳號都讀得到(CWE-276)。
+    已存在的目錄不改動權限,避免覆寫使用者刻意設定的部署權限。
+    """
+    parent = Path(db_path).parent
+    parent.mkdir(parents=True, exist_ok=True, mode=DB_DIR_MODE)
+    return parent
+
+
+# 要同步哪些開放資料由 catalog 決定(見 health_opendata_mcp/catalog.py):
+# 新增資料集 = 加一筆帶出處的 entry,不必再改本檔。此處只保留投影後的
+# spec 清單,維持既有 import 路徑不變。
+NHI_DATASETS = enabled_nhi_specs()
+NHI_FACILITY_DATASETS = enabled_nhi_facility_specs()
+STATIC_CSV_DATASETS = enabled_static_specs()
 
 # 資訊勞務主題關鍵字 — 與看板 pcc-it-tender-board / 半月排程 SKILL 同步維護
 IT_INCLUDE = (
@@ -54,14 +73,34 @@ IT_EXCLUDE = (
 )
 
 
-async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    repo = SqliteRepository(db_path)
-    await repo.init()
-    adapters = [
-        NhiApiAdapter([NHI_CLINIC_DATASET]),
-        NhiHealthcareFacilityAdapter([NHI_HEALTHCARE_FACILITY_DATASET]),
-        # 衛福部轄下機關 + 資訊勞務(IT 關鍵字)標案 — 看板/排程資料源
+def build_adapters(
+    award_months: int,
+    tender_months: int,
+    *,
+    nhi_specs: list[NhiDatasetSpec] | None = None,
+    facility_specs: list[NhiDatasetSpec] | None = None,
+    static_specs: list[StaticCsvSpec] | None = None,
+) -> list[SourceAdapter]:
+    """依 catalog 組出本輪要跑的 adapter。
+
+    只有 catalog 中 enabled 的 entry 會產生網路請求;某一 kind 沒有任何
+    enabled entry 時就不建立對應 adapter —— 不註冊一個永遠抓 0 筆的來源。
+    spec 可注入(DI),測試不必動模組層狀態。
+    """
+    nhi = NHI_DATASETS if nhi_specs is None else nhi_specs
+    facility = NHI_FACILITY_DATASETS if facility_specs is None else facility_specs
+    static = STATIC_CSV_DATASETS if static_specs is None else static_specs
+    adapters: list[SourceAdapter] = []
+    if nhi:
+        adapters.append(NhiApiAdapter(nhi))
+    # 同一個 NHI 端點,但這批要走 facility adapter 的範圍篩選與衍生欄位。
+    if facility:
+        adapters.append(NhiHealthcareFacilityAdapter(facility))
+    if static:
+        adapters.append(StaticCsvAdapter(static))
+    # 衛福部轄下機關 + 資訊勞務(IT 關鍵字)標案 — 看板/排程資料源。
+    # PCC 不是 CSV registry 驅動(半月 XML + 關鍵字過濾),故不進 catalog。
+    adapters.append(
         PccTenderAdapter(
             award_months=award_months,
             tender_months=tender_months,
@@ -70,8 +109,16 @@ async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
             collection="procurement",
             title_includes=IT_INCLUDE,
             title_excludes=IT_EXCLUDE,
-        ),
-    ]
+        )
+    )
+    return adapters
+
+
+async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
+    ensure_db_dir(db_path)
+    repo = SqliteRepository(db_path)
+    await repo.init()
+    adapters = build_adapters(award_months, tender_months)
     exit_code = 0
     for adapter in adapters:
         summary = await run_source(adapter, repo)
@@ -89,7 +136,7 @@ async def _sync(db_path: str, award_months: int, tender_months: int) -> int:
 
 def sync_main() -> None:
     parser = argparse.ArgumentParser(
-        description="同步衛福部資訊勞務標案 + 健保院所資料至本地 DB"
+        description="同步衛福部資訊勞務標案 + 診所資料至本地 DB"
     )
     parser.add_argument("--db", default=default_db_path(), help="SQLite DB 路徑")
     parser.add_argument("--award-months", type=int, default=12, help="決標回溯月數")

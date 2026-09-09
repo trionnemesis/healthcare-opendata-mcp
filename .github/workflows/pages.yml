@@ -21,6 +21,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify dashboard artifact
+        run: python scripts/verify_dashboard.py --site docs
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 

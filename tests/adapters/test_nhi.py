@@ -213,6 +213,26 @@ class TestBuiltinRegistry:
         assert refs[0].dataset.id == "nhi-clinic"
         assert refs[0].fmt == "csv"
 
-        facility = {s.dataset_id: s for s in NHI_DATASETS}.get("nhi-healthcare-facility")
-        assert facility is not None
-        assert facility.r_id == "A21030000I-D2100G-001"
+    async def test_healthcare_facility_registered_as_unverified_candidate(self):
+        """facility 已進 catalog,但未實查 → enabled=false,因此不進同步投影。
+
+        這同時鎖住兩件事:r_id 有登錄,以及「沒有 verified_at 就不會被同步」
+        的 catalog 不變量對這筆 entry 確實生效。
+        """
+        from health_opendata_mcp.catalog import (
+            CATALOG,
+            AdapterKind,
+            enabled_nhi_facility_specs,
+            enabled_nhi_specs,
+        )
+
+        entry = {e.dataset_id: e for e in CATALOG}.get("nhi-healthcare-facility")
+        assert entry is not None
+        assert entry.r_id == "A21030000I-D2100G-001"
+        assert entry.kind is AdapterKind.NHI_FACILITY
+        # 尚未對官方端點實查,故不得啟用
+        assert entry.enabled is False
+        assert entry.verified_at is None
+        # 未啟用 → 兩個投影都不包含它,build_adapters 不會建對應 adapter
+        ids = {s.dataset_id for s in enabled_nhi_specs() + enabled_nhi_facility_specs()}
+        assert "nhi-healthcare-facility" not in ids

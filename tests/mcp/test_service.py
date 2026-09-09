@@ -1,4 +1,6 @@
 """QueryService — MCP 工具背後的查詢服務(BDD: query-tools / query-rows.feature)。"""
+from datetime import datetime
+
 import pytest
 
 from health_opendata_mcp.contracts import (
@@ -253,3 +255,36 @@ class TestServerWiring:
             "search_records",
             "get_record",
         }
+
+
+class TestDatasetFreshness:
+    """list_datasets / get_dataset 一併回新鮮度(additive,既有欄位不變)。"""
+
+    async def test_list_datasets_reports_row_count_and_fetch_time(self, service):
+        datasets = await service.list_datasets()
+        assert len(datasets) == 1
+        ds = datasets[0]
+        assert ds["id"] == "pcc-tender-mohw"
+        assert ds["row_count"] == len(ROWS)
+        assert ds["last_fetched_at"] is not None
+        datetime.fromisoformat(ds["last_fetched_at"])
+
+    async def test_existing_list_datasets_fields_are_unchanged(self, service):
+        ds = (await service.list_datasets())[0]
+        assert ds["title"] == "衛福部標案"
+        assert ds["source_id"] == "pcc"
+        assert ds["collection"] == "healthcare"
+        assert ds["columns"] == ["agency", "award_price", "title"]
+
+    async def test_get_dataset_reports_freshness(self, service):
+        info = await service.get_dataset("pcc-tender-mohw")
+        assert info["row_count"] == len(ROWS)
+        assert info["last_fetched_at"] is not None
+        assert [c["name"] for c in info["schema"]] == [
+            "agency", "award_price", "title",
+        ]
+
+    async def test_empty_database_lists_nothing(self, tmp_path):
+        repo = SqliteRepository(str(tmp_path / "empty.db"))
+        await repo.init()
+        assert await QueryService(repo).list_datasets() == []

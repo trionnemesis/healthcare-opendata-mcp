@@ -44,6 +44,20 @@ class DatasetMeta:
 
 
 @dataclass(frozen=True)
+class DatasetStatus:
+    """讀模型的新鮮度快照 —— 與 DatasetMeta(ingestion 契約)刻意分開。
+
+    row_count 為 None 代表「物化表尚不存在」(該 dataset 從未成功 upsert),
+    語意上不同於 0 筆。缺值不折成 0,否則消費端無法區分「查無資料」與
+    「這個資料集根本沒同步成功」。
+    """
+
+    dataset_id: str
+    last_fetched_at: datetime | None = None
+    row_count: int | None = None
+
+
+@dataclass(frozen=True)
 class ResourceRef:
     """discover() 產出的單一可抓資源(一個檔案 / 一個 API 端點)。"""
 

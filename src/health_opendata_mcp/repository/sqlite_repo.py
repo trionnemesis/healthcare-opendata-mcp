@@ -20,6 +20,7 @@ from health_opendata_mcp.contracts import (
     ColumnSpec,
     DatasetMeta,
     DatasetNotFoundError,
+    DatasetStatus,
     NormalizedBatch,
     QueryResult,
     RunStatus,
@@ -189,6 +190,49 @@ class SqliteRepository:
                 result.append(meta)
         return result
 
+    async def dataset_status(self, dataset_id: str) -> DatasetStatus | None:
+        """單一 dataset 的新鮮度 —— 不存在於白名單時回 None。"""
+        async with aiosqlite.connect(self._db_path) as db:
+            cur = await db.execute(
+                "SELECT last_fetched_at FROM datasets WHERE id = ?", (dataset_id,)
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            return await self._status(db, dataset_id, row[0])
+
+    async def list_dataset_status(self) -> list[DatasetStatus]:
+        async with aiosqlite.connect(self._db_path) as db:
+            cur = await db.execute(
+                "SELECT id, last_fetched_at FROM datasets ORDER BY id"
+            )
+            rows = await cur.fetchall()
+            return [await self._status(db, r[0], r[1]) for r in rows]
+
+    async def _status(
+        self, db: aiosqlite.Connection, dataset_id: str, fetched_at: str | None
+    ) -> DatasetStatus:
+        table = self.materialized_table(dataset_id)
+        cur = await db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        )
+        # 物化表由首次成功 upsert 建立;沒有表就是「從未同步成功」,
+        # 此時 row_count 保持 None,不折成 0(見 DatasetStatus docstring)。
+        count: int | None = None
+        if await cur.fetchone() is not None:
+            # 表名來自 datasets 白名單經 materialized_table() 正規化,
+            # 非使用者原始輸入;無可參數化表名的 SQLite 語法。
+            cur = await db.execute(f'SELECT COUNT(*) FROM "{table}"')  # nosec B608
+            count = (await cur.fetchone())[0]  # type: ignore[index]
+        return DatasetStatus(
+            dataset_id=dataset_id,
+            last_fetched_at=(
+                datetime.fromisoformat(fetched_at) if fetched_at else None
+            ),
+            row_count=count,
+        )
+
     async def query_rows(
         self,
         dataset_id: str,
@@ -215,6 +259,18 @@ class SqliteRepository:
     async def sample_rows(self, dataset_id: str, n: int) -> QueryResult:
         return await self.query_rows(dataset_id, limit=n)
 
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """跳脫 LIKE 萬用字元,讓 keyword 一律以字面值比對(CWE-943)。
+
+        未跳脫時 keyword="%" 會命中每一筆 record、"_" 會命中任一字元,
+        使用者可藉此把「關鍵字搜尋」變成「全表傾印」(受 limit 上限約束,
+        但語意已被顛覆)。跳脫順序必須先處理反斜線,否則會二次跳脫。
+        """
+        return (
+            value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+
     async def search_records(
         self, keyword: str, dataset_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
@@ -224,9 +280,9 @@ class SqliteRepository:
         effective_limit = normalize_limit(limit)
         sql = (
             "SELECT dataset_id, natural_key, payload FROM records"
-            " WHERE payload LIKE ?"
+            " WHERE payload LIKE ? ESCAPE '\\'"
         )
-        params: list[Any] = [f"%{keyword}%"]
+        params: list[Any] = [f"%{self._escape_like(keyword)}%"]
         if dataset_id:
             sql += " AND dataset_id = ?"
             params.append(dataset_id)
