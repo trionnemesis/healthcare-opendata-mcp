@@ -169,6 +169,14 @@
         "verified_at": {
           "description": "catalog 記錄的官方端點實查日期;非 catalog 驅動的資料集為 null。",
           "$ref": "#/$defs/nullableString"
+        },
+        "stale_after_days": {
+          "description": "過期門檻(天),由 update_cadence 推導(2 倍更新週期)。null = 無契約可依據。",
+          "$ref": "#/$defs/nullableInteger"
+        },
+        "freshness": {
+          "description": "unknown = 無更新頻率契約或尚未同步,不得被讀成「已驗證為最新」。",
+          "enum": ["fresh", "stale", "unknown"]
         }
       }
     },

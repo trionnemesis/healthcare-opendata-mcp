@@ -69,6 +69,7 @@ The project keeps ingestion and querying separate:
 
 - 「資料集概覽」矩陣由 catalog（已啟用者）與資料庫產生，**不硬編碼資料集名單**：啟用一個新資料集後，重新 export 即會出現在頁面上，不需要改 HTML、schema 或部署閘門。停用的候選不發布 —— 它們尚未實查，列出來會讓訪客誤以為已涵蓋。
 - 矩陣中筆數顯示「—」代表該資料集**從未同步成功**（物化表尚未建立），與「同步成功但 0 筆」不同。
+- 新鮮度**逐資料集**判定，門檻由 catalog 的 `update_cadence` 推導（**2 倍更新週期**）：每日更新的資料集停更 3 天就是過期，年度更新的資料集停更 3 天完全正常。顯示「無契約」代表該資料集未登錄更新頻率，**沒有判定依據**，不等於資料是最新的；這類資料集不會把整頁狀態拉成過期。判定基準是 `last_fetched_at`（per-dataset），不是 `ingestion_runs.finished_at`（per-source）—— 一個成功的 run 底下可能有某個資料集根本沒更新到。
 - `generated_at` 是 UTC 快照產生時間；`status.source_max_date` 才是 PCC 官方資料中的最新日期。
 - 狀態明確區分 `fresh`、`stale`、`degraded`、`empty`；JSON 無法載入或格式錯誤時，頁面顯示失敗而不呈現假成功。
 - P0 只發布 allowlist 中的 PCC 欄位。NHI 僅顯示筆數與最後同步 metadata，不發布電話、地址或全院所目錄。
@@ -87,7 +88,7 @@ The project keeps ingestion and querying separate:
 .venv/bin/python scripts/verify_dashboard.py --site docs
 ```
 
-快照契約見 [`docs/data/schema-v1.json`](docs/data/schema-v1.json)，設計與 P0/P1/P2 邊界見 [`docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md`](docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md)；資料集矩陣改由 catalog 驅動的決策見 [`docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md`](docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md)。
+快照契約見 [`docs/data/schema-v1.json`](docs/data/schema-v1.json)，設計與 P0/P1/P2 邊界見 [`docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md`](docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md)；資料集矩陣改由 catalog 驅動的決策見 [`docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md`](docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md)，過期門檻的推導規則見 [`docs/superpowers/specs/2026-09-09-freshness-from-cadence.md`](docs/superpowers/specs/2026-09-09-freshness-from-cadence.md)。
 
 ## Install
 
