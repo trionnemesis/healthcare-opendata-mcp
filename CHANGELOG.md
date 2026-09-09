@@ -1,5 +1,174 @@
 # Changelog
 
+## [0.8.0] - 2026-09-07
+
+### Changed
+- **Pages 快照的資料集矩陣改由 catalog 驅動(issue #25 Slice 3)**:`datasets` 先前是
+  **固定兩個 key 的物件** —— `build_snapshot` 把 `pcc_tender` / `nhi_clinic` 連同
+  `source_url` 字串寫死在 payload literal 裡,`schema-v1.json` 是
+  `additionalProperties: false` + 兩者皆 required,`verify_dashboard` 逐一檢查那兩個
+  名字,`_derive_status` 收硬編碼的兩元素 source 清單。
+  結果是 #26 建立的 catalog 一旦啟用新資料集,Pages **看不到它**,schema 還會拒收 ——
+  資料集名單有兩個真相來源,必然漂移。
+  - 現在 `datasets` 由 **catalog(已啟用者)∪ 資料庫**產生。停用的候選**不發布**:
+    它們尚未實查(#25 Slice 2),列在公開頁面會讓訪客誤以為已涵蓋。
+  - `source_url` 只有 PCC 在 `NON_CATALOG_SOURCE_URLS` 明列(它不是 catalog 驅動的),
+    其餘一律取自 catalog。同一件事不在兩個地方維護。
+  - 每筆資料集另帶 catalog 出處:`title` / `collection` / `update_cadence` /
+    `verified_at`。非 catalog 驅動者為 `null`,不臆造。
+  - `_derive_status` 的來源清單改由「實際發布的資料集反推 `source_id`」產生,
+    標籤取 `data_sources.name`(缺列則退回 `source_id`);`fresh` 訊息不再寫死「PCC／NHI」。
+- **`schema-v1.json` 對資料集開放**(放寬,非破壞):`datasets` 改為
+  `additionalProperties: {$ref dataset}` + `propertyNames: ^[a-z0-9_]+$`,
+  `required` 由兩者縮為 `["pcc_tender"]`;`dataset.row_count` 與 `dataset.source_url`
+  改為可為 null;新增選填的四個出處欄位。
+  **`schema_version` 維持 `"1.0"`** —— 先前每一份合法快照仍然合法,只是多了一些
+  也合法的快照。已評估過改陣列並切 v2,否決理由見設計文件。
+  - 實測:委入的 `current.json` 對新 schema 0 error;加入一筆全新資料集後仍 0 error
+    (即新增資料集**不需要**改 schema)。
+- **`verify_dashboard.py` 只驗形狀不驗成員**:`pcc_tender` 仍必須存在且 `row_count`
+  為整數(看板的摘要與表格都靠它),其餘資料集只檢查 key 命名、必填欄位齊全、
+  `row_count` 為整數或 null。驗證器若知道資料集名單,每加一個資料集就要改部署閘門。
+  維持 **stdlib-only**(`pages.yml` 不安裝套件)。
+
+### Added
+- 看板新增「資料集概覽」矩陣(`#dataset-matrix-body`):資料集、筆數、最後同步、
+  最近一次同步狀態、更新頻率、出處驗證日、授權。
+  以 `createElement` / `textContent` 渲染,不用 `innerHTML`(`verify_dashboard` 的
+  靜態檢查未放寬);無 JS 時顯示明確說明列,上方 KPI 摘要仍為建置時預渲染。
+- `docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md`:記錄本次對
+  2026-09-01 P0 契約的增量調整與「放寬 v1 而非切 v2」的理由。
+
+### Fixed
+- `row_count` 缺值語意一致化:物化表不存在時快照輸出 `null`、前端顯示「—」,
+  不再折成 0。「從未同步成功」與「同步成功但 0 筆」是兩件事。
+- `render_dashboard` 不再假設 `nhi_clinic` 一定存在(它由 catalog 決定);
+  缺席時 KPI 顯示「無資料」而非炸掉或顯示 0。
+
+### Verified
+- 全套件 **236 tests 通過**(修改前 220,新增 16:catalog 驅動的資料集 6、
+  render 容錯 2、驗證器開放性 8)。
+- `bandit -r src scripts -ll`:Medium 0(與修改前相同)。
+- `scripts/verify_dashboard.py --site docs` 通過;委入的 Pages artifact 未退化。
+- 以 `jsonschema` Draft 2020-12 實際驗證 schema 本身與委入快照(該套件只在本機
+  檢查時使用,**未**加入專案相依)。
+
+### 未處理(如實記錄)
+- `docs/data/current.json` **未重新產生**。它是一次真實同步的產物,本環境沒有那個
+  DB;用 fixture 重建等於用假資料覆蓋真資料。新增的出處欄位為選填,舊快照仍合法,
+  矩陣的出處欄位會顯示「—」直到下一次真實 export。
+- Pages 仍未自動同步(P1 範圍,見 #21)。
+
+## [0.7.1] - 2026-09-07
+
+### Added
+- **`scripts/verify_catalog_sources.py`(issue #25 Slice 2)**:對 catalog entry 的官方端點
+  實查,輸出可貼進 `catalog.py` 的 `verified_at` / `verified_note` 素材。
+  把「實查」從人工看網頁寫心得,變成可重跑、只輸出**可觀察事實**的程序:
+  HTTP status、content-type、byte size、列數、欄位名、natural key 欄位是否存在、
+  相異鍵數、無鍵列數。
+  - **只讀**:永遠不修改 `catalog.py`、不翻 `enabled`。啟用仍是人工 review 後的 PR 編輯。
+  - **先驗證後請求**:entry 未通過 `validate_catalog()`(例如 host 不在
+    `OFFICIAL_HOSTS`)時,連請求都不發出。
+  - **欄位處理與 ingestion 一致**(strip + `column_renames`),否則報告出來的欄位名
+    不是實際會用的那組。
+  - **失敗一律明說**:非 200、空回應、只有 header、UTF-8 解不開、natural key 欄位不存在
+    都是失敗並保留已觀察到的事實;離開碼非零。不以 `errors="replace"` 掩蓋解碼問題。
+  - **回應大小上限**(預設 64 MiB):超過即中止,不截斷後假裝解析成功。
+  - 抓取例外帶上例外類別:`ProxyError: 403 Forbidden`(本地 egress 政策)與上游限流的
+    403 都顯示同一句話,分不出來就會誤判資料源已失效。
+  - 第二個用途是**上游漂移檢查**:`--enabled-only` 對已啟用的資料集重跑,欄位或
+    natural key 不再成立時離開碼非零。
+- **`.github/workflows/verify-catalog.yml`**:`workflow_dispatch` 手動觸發上述 script。
+  **刻意不加 `schedule`** —— 定期對官方端點發流量是持續性外部負載,屬維運決策,
+  留給維護者拍板。
+
+### Verified
+- 全套件 **220 tests 通過**(修改前 203,新增 17:成功路徑事實 3、失敗路徑 6、
+  白名單先於請求 1、大小上限 2、note 產生 2、entry 選取 3)。
+- `bandit -r src scripts -ll`:Medium 0(與修改前相同)。
+- 成功路徑以注入 fetcher 的 fixture 驗證;失敗路徑以本環境實際的 proxy 403 驗證
+  (離開碼 1、三筆 entry 皆標示 `ProxyError: 403 Forbidden`)。
+- **未驗證事項(如實記錄)**:本次 session 的 egress 政策拒絕全部五個官方 host
+  (`info.nhi.gov.tw`、`data.gov.tw`、`www.mohw.gov.tw`、`dep.mohw.gov.tw`、
+  `www.nhi.gov.tw`,CONNECT 皆回 403),因此 **Slice 2 的實查本身尚未執行**,
+  candidate 仍為 `enabled=False`。本次交付的是讓實查可被執行且結果可稽核的工具,
+  不是實查結果。
+
+## [0.7.0] - 2026-09-07
+
+### Added
+- **資料集目錄 `catalog.py`(issue #25 Slice 1)**:把「要同步哪些政府開放資料」從
+  `cli.py` 的模組層常數,改成帶出處的宣告式資料。
+  每筆 `CatalogEntry` 攜帶 `update_cadence`、`landing_url`、`verified_at`、
+  `verified_note`、`enabled`,擴充一個資料集從此是「加一筆資料 + 實查後翻一個
+  flag」,而不是改 code。
+  以 import 時執行的 `validate_catalog()` 強制四條不變量:
+  - **驗證閘門**:`enabled=True` 必須有 `verified_at`(YYYY-MM-DD)與 `verified_note`。
+    未實查的候選可以進目錄,但只能是 `enabled=False` —— 目錄有能力誠實表達
+    「還沒驗證」,不需要靠猜測填空。
+  - **官方網域白名單**:下載與說明頁 URL 的 host 必須在 `OFFICIAL_HOSTS`。entry 是
+    資料;不設限等於「新增一筆資料 = 新增一個對任意主機發請求的能力」。
+  - **kind 與欄位一致**:`nhi_api` 只能有 `r_id`、`static_csv` 只能有 `urls`。
+  - **`r_id` 字元集**:`r_id` 會被字串插值進 query string
+    (`NhiApiAdapter.discover`),限制為 `[A-Za-z0-9]+(-[A-Za-z0-9]+)+` 才能保證它不會
+    挾帶 `&` / `?` / `#` / 空白去改寫 URL 的其他參數。
+- `list_datasets` / `get_dataset` 新增 `last_fetched_at` 與 `row_count`(additive,
+  既有欄位與參數簽章不變)。先前兩者都不回新鮮度,呼叫端無從分辨「查無資料」與
+  「這個資料集根本沒同步成功」—— 這與專案自己在 #21 寫下的「資料新鮮度與失敗
+  狀態也是資料」矛盾。
+  - 讀模型以新的 `DatasetStatus` DTO 承載,刻意不塞進 ingestion 端的 `DatasetMeta`。
+  - **物化表不存在時 `row_count` 為 `null`,不折成 0**:「從未同步成功」與
+    「同步成功但 0 筆」是兩件事,不可混為一談。
+- `SqliteRepository.dataset_status()` / `list_dataset_status()`。
+- `NhiApiAdapter` 的 `NHI_API_BASE` 由私有改為公開常數,讓 catalog 能組出
+  「實際會被抓取的 URL」並對它做白名單檢查。
+
+### Fixed
+- **`StaticCsvAdapter` 從未被實例化**:該 adapter 自 0.2.0 起已實作、已由
+  `adapters/__init__.py` 匯出、有 5 項測試,但 `cli.py:_sync()` 只組
+  `NhiApiAdapter` + `PccTenderAdapter` —— `gov-static` 來源永遠不會註冊,靜態 CSV
+  實際貢獻 0 筆。現改由 `build_adapters()` 依 catalog 組裝並接上。
+  - 目前 catalog 沒有任何 enabled 的 static entry(見下方「未驗證事項」),
+    故本次仍不會發出靜態 CSV 請求;接線本身以注入 spec 的測試釘住。
+  - `build_adapters()` 對沒有 enabled entry 的 kind 不建立 adapter —— 不註冊一個
+    永遠抓 0 筆的來源。
+
+### Verified
+- 全套件 **203 tests 通過**(修改前 159,新增 44:catalog 不變量 28、
+  來源組裝 6、dataset 新鮮度 6、service additive 欄位 4)。
+- `bandit -r src scripts -ll`:Medium 0(與修改前逐項相同:Low 3 / Medium 0)。
+- `pip-audit`:專案相依無弱點;僅回報執行環境 venv bootstrap 的 `pip 24.0` /
+  `setuptools`,不屬任何專案相依(CI 在 3.12 且先升級 pip,不會出現)。
+- **未驗證事項(如實記錄)**:本次 session 的 egress 政策拒絕
+  `info.nhi.gov.tw:443`(proxy 回 403),因此**沒有**對任何官方端點做實查。
+  - `nhi-clinic` 的 `verified_at=2026-06-10` 沿用 repo 既有的實查註記,非本次驗證。
+  - `nhi-hospital-district`(D21003-003)、`nhi-hospital-bed-ratio`(D02001-015)
+    的 rId 取自 `tests/adapters/test_nhi.py`,repo 內無實查日期,故以
+    `enabled=False`、`verified_at=None` 進目錄,不會被同步。
+  - `StaticCsvAdapter` 原本預計接的 `data.gov.tw` / `mohw.gov.tw` distribution URL
+    在 repo 內只有 `example.test` 佔位值,無可驗證的真實 URL,故未加入目錄。
+
+## [0.6.3] - 2026-08-14
+
+### Fixed
+- **`enrich_bid_deadline` 漏掉決標檢查**:module docstring 寫明處理「最近、尚未決標、值還空」的招標公告,
+  但 `_candidates()` 只檢查 `announcement_type='招標公告'`、`date>=threshold`、`bid_deadline` 為空、標題屬 IT 類,
+  從未比對同案是否已決標 —— 宣告的行為從一開始就沒被實作。
+  - 招標與決標在半月檔是兩筆獨立 record(共用 `job_number`/`case_no`),只看招標那筆看不出案子已結束
+  - 後果是額度排擠:明細頁逐案抓取受 `--limit` 與 `--throttle` 約束,已決標但欄位仍空的舊案會佔掉配額,
+    排擠仍可投標的新案 —— 而看板要顯示的正是後者的剩餘天數
+  - 修正:先掃出決標公告的 `job_number` 集合,再從招標候選中排除;`_TENDER` / `_AWARD` 提為常數
+    (與 `adapters/pcc_tender.py` 同值),進度訊息一併補上「未決標」
+
+### Changed
+- `pyproject.toml` 的 pytest `pythonpath` 加入 `scripts`,讓維運腳本可被測試 import(`scripts/` 不是 package)。
+
+### Verified
+- 新增 `tests/scripts/test_enrich_bid_deadline.py` 8 項(決標排除 4 + 既有四項條件與排序不回歸 4);
+  決標排除案例在修正前確實失敗(`['A-1'] != []`)、修正後通過,其餘 7 項前後皆過。
+- 全套件 124 tests 通過;`bandit -r src -ll` 0 Medium;`pip-audit` 無弱點。
+
 ## [0.6.2] - 2026-07-25
 
 ### Added
@@ -12,10 +181,11 @@
 - dev extras 新增 `bandit`、`pip-audit`,讓本機與 CI 檢測門檻一致。
 
 ### Changed
-- 三處 bandit Medium findings 加上 `# nosec` 與理由註記(非全域關閉規則,保留未來偵測能力):
-  - `_pcc_opendata.py` B314:DTD/ENTITY 與大小上限已在 `_safe_fromstring` 擋掉;改用 `defusedxml` 需新增依賴,待人工核可
+- 兩處 bandit Medium findings 加上 `# nosec` 與理由註記(非全域關閉規則,保留未來偵測能力):
   - `query_guard.py` B608:`table` 來自 dataset_id 白名單、欄位片段已過 `_validate`,非使用者原始輸入
   - `mcp_server/__main__.py` B104:容器/K8s 需綁 `0.0.0.0` 才收得到 Service 流量,且可由 `HCMCP_HOST` 覆寫
+  - (原本還有第三處 `_pcc_opendata.py` B314「待人工核可 defusedxml」的 `# nosec`;合併 master 時
+    採用已在 `ae72bb9` 落地的 `defusedxml`,B314 不再觸發,該註記隨之移除 —— 此處補正實際落地內容)
 
 ### Verified
 - Python 3.11 / 3.12 各 112 tests 通過;`bandit -r src -ll` 0 issues;乾淨環境 `pip-audit` 回報 No known vulnerabilities。

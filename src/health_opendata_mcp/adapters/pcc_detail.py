@@ -16,7 +16,7 @@ from health_opendata_mcp.adapters import _pcc_detail as detail
 from health_opendata_mcp.contracts import BlockedError
 
 _BASE = "https://web.pcc.gov.tw"
-_ALLOWED_HOST = "web.pcc.gov.tw"
+_BASE_HOST = urlparse(_BASE).hostname or ""
 _INDEX_URL = f"{_BASE}/prkms/tender/common/basic/indexTenderBasic"
 _SEARCH_URL = f"{_BASE}/prkms/tender/common/basic/readTenderBasic"
 _SEARCH_FORM = {
@@ -30,24 +30,22 @@ _SEARCH_FORM = {
 _BLOCKED_STATUS = {403, 429}
 
 
-def _resolve_detail_url(path: str) -> str:
-    """把明細連結解析為絕對 URL,並限制在 web.pcc 主機內。
+def _resolve_detail_url(path: str, job_number: str) -> str:
+    """把搜尋結果頁的明細連結解析成「必定落在 web.pcc.gov.tw」的絕對 URL。
 
-    path 來自 find_detail_path — 它是從上游搜尋結果頁的 href 抓出來的,屬於
-    「不完全信任的上游輸入」(與 _pcc_opendata 對上游 XML 的態度一致)。
-    _HREF_RE 只要求 href 內含 tpam?pk= 或 readBulletion 子字串,絕對 URL 同樣
-    命中,因此若上游頁面被竄改或注入,原本的 `path.startswith("http")` 分支會
-    把該 URL 原封不動拿去請求 → 任意對外請求跳板(CWE-918),且回應內容會經
-    extract_detail 回傳給呼叫端。
-
-    改以 urljoin 解析(相對路徑行為與原本相同,另可正確處理 protocol-relative
-    的 //host/... 形式),再檢查主機與傳輸協定;不符即拒絕。
+    明細連結取自上游回應的 HTML,屬不可信輸入。舊寫法 `path if
+    path.startswith("http") else _BASE + path` 會讓一個絕對 href 直接決定
+    請求目標 —— 連線帶著共用 cookie jar 且 follow_redirects=True,等於把
+    session 送往任意主機(CWE-918 SSRF)。改以 urljoin 正規化(相對路徑行為
+    不變),再比對 host 白名單;非 PCC 網域一律拒絕而非靜默改寫。
     """
-    url = urljoin(f"{_BASE}/", path)
+    url = urljoin(_BASE + "/", path)
     parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https" or host != _ALLOWED_HOST:
-        raise ValueError(f"明細連結指向非預期來源,已拒絕: {parsed.scheme}://{host}")
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or host != _BASE_HOST:
+        raise RuntimeError(
+            f"unexpected detail href for {job_number}: 明細連結必須指向 {_BASE_HOST}"
+        )
     return url
 
 
@@ -76,7 +74,8 @@ class PccDetailEnricher:
         path = detail.find_detail_path(search.text, job_number)
         if not path:
             return None
-        page = await self._get(_resolve_detail_url(path))
+        url = _resolve_detail_url(path, job_number)
+        page = await self._get(url)
         return detail.extract_detail(page.text)
 
     async def _get(self, url: str) -> HttpResp:

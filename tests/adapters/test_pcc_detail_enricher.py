@@ -88,7 +88,7 @@ class TestDetailUrlHostGuard:
     )
     async def test_off_host_detail_link_is_rejected(self, href):
         client = _FakeClient(search_html=f'<a href="{href}">明細</a>')
-        with pytest.raises(ValueError, match="非預期來源"):
+        with pytest.raises(RuntimeError, match="明細連結必須指向"):
             await PccDetailEnricher(client).fetch_detail("A-1")
         # 關鍵斷言:被拒的主機完全沒有被請求過
         assert not any("attacker.example.com" in u for _, u in client.calls)
