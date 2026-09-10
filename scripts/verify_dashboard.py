@@ -151,7 +151,7 @@ def _verify_relative_links(html_path: Path, links: list[str]) -> None:
             raise ValueError(f"broken local link from {html_path}: {link}")
 
 
-def verify_site(site: Path) -> dict[str, Any]:
+def verify_site(site: Path, *, require_non_empty: bool = False) -> dict[str, Any]:
     required_files = [
         site / "index.html",
         site / "styles.css",
@@ -216,6 +216,12 @@ def verify_site(site: Path) -> dict[str, Any]:
     if "textContent" not in script or "createElement" not in script:
         raise ValueError("dashboard.js is missing the safe DOM rendering path")
 
+    # 部署路徑用:剛產生的快照若是 empty,代表同步或投影出了問題。
+    # 空資料不得取代 last-known-good —— 那是用「看起來成功」蓋掉真實資料。
+    # 委入的快照走一般驗證路徑,empty 仍是合法狀態,故本檢查是選用的。
+    if require_non_empty and payload["status"]["state"] == "empty":
+        raise ValueError("refreshed snapshot is empty; refusing to replace last-known-good")
+
     return {
         "schema_version": payload["schema_version"],
         "status": payload["status"]["state"],
@@ -228,8 +234,13 @@ def verify_site(site: Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="驗證 GitHub Pages 靜態資料看板")
     parser.add_argument("--site", default="docs", help="Pages artifact 目錄")
+    parser.add_argument(
+        "--require-non-empty",
+        action="store_true",
+        help="快照為 empty 時視為失敗(部署前用,避免空資料取代 last-known-good)",
+    )
     args = parser.parse_args()
-    result = verify_site(Path(args.site))
+    result = verify_site(Path(args.site), require_non_empty=args.require_non_empty)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 

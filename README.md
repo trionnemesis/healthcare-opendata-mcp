@@ -74,7 +74,10 @@ The project keeps ingestion and querying separate:
 - 狀態明確區分 `fresh`、`stale`、`degraded`、`empty`；JSON 無法載入或格式錯誤時，頁面顯示失敗而不呈現假成功。
 - P0 只發布 allowlist 中的 PCC 欄位。NHI 僅顯示筆數與最後同步 metadata，不發布電話、地址或全院所目錄。
 - 金額缺值維持 `null`，不轉為 0。完整 projection 先量測；超過 5 MiB 時只縮限明細列，仍保留全量聚合與明確的 export strategy。
-- 這是隨 repository 提交的靜態快照，P0 尚未自動同步；完整、即時或任意條件查詢仍使用 MCP／SQLite。
+- 部署流程會嘗試重新同步官方來源並重建快照；**同步失敗時部署上一份有效快照（last-known-good）並讓 workflow 轉紅**，不會部署空資料，也不會靜默成功。新快照必須通過驗證且非空，才准取代舊的。
+- 每日排程**尚未啟用**（`schedule:` 在 `pages.yml` 中維持註解）：runner 能否穩定完成官方同步尚未實測，且每日全量重抓 12 個月的 PCC 半月檔對政府站台是持續性負載。以 `workflow_dispatch` 跑過一次確認後即可啟用。
+- 頁面載入時會以「現在」重新檢查快照年紀 —— 若自動同步停擺，舊快照不會繼續自稱最新。
+- 完整、即時或任意條件查詢仍使用 MCP／SQLite。
 
 從已成功同步的真實 DB 重建 snapshot 與預先渲染摘要：
 
@@ -88,7 +91,7 @@ The project keeps ingestion and querying separate:
 .venv/bin/python scripts/verify_dashboard.py --site docs
 ```
 
-快照契約見 [`docs/data/schema-v1.json`](docs/data/schema-v1.json)，設計與 P0/P1/P2 邊界見 [`docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md`](docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md)；資料集矩陣改由 catalog 驅動的決策見 [`docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md`](docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md)，過期門檻的推導規則見 [`docs/superpowers/specs/2026-09-09-freshness-from-cadence.md`](docs/superpowers/specs/2026-09-09-freshness-from-cadence.md)。
+快照契約見 [`docs/data/schema-v1.json`](docs/data/schema-v1.json)，設計與 P0/P1/P2 邊界見 [`docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md`](docs/superpowers/specs/2026-09-01-pages-dashboard-p0.md)；資料集矩陣改由 catalog 驅動的決策見 [`docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md`](docs/superpowers/specs/2026-09-07-pages-catalog-driven-datasets.md)，過期門檻的推導規則見 [`docs/superpowers/specs/2026-09-09-freshness-from-cadence.md`](docs/superpowers/specs/2026-09-09-freshness-from-cadence.md)，自動同步與 last-known-good 的設計見 [`docs/superpowers/specs/2026-09-10-pages-auto-sync.md`](docs/superpowers/specs/2026-09-10-pages-auto-sync.md)。
 
 ## Install
 

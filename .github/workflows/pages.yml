@@ -5,15 +5,38 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      tender_months:
+        description: "招標回溯月數"
+        required: false
+        default: "12"
+        type: string
+      award_months:
+        description: "決標回溯月數"
+        required: false
+        default: "12"
+        type: string
+  # 每日排程尚未啟用。理由見 docs/superpowers/specs/2026-09-10-pages-auto-sync.md:
+  #   1. 本 PR 無法在可連外環境驗證 runner 能否穩定完成官方來源同步
+  #   2. 每日全量重抓 12 個月的 PCC 半月檔對政府站台是持續性負載,屬維運決策
+  # 由維護者以 workflow_dispatch 成功跑過一次、確認負載可接受後,取消下列註解:
+  # schedule:
+  #   - cron: "17 20 * * *"   # 每日一次(UTC),對應台北 04:17
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# 同時只跑一個部署。並行時後者會拿到半舊的 _site,且兩份 artifact 互相覆蓋。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -26,17 +49,66 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify dashboard artifact
-        run: python scripts/verify_dashboard.py --site docs
+      - name: Install package
+        run: python -m pip install -e .
+
+      # last-known-good:委入 repo 的快照。同步失敗時部署的就是這一份,
+      # 網站因此不會因為上游出事而空掉或停在更舊的版本。
+      - name: Seed artifact with the committed snapshot
+        run: cp -r docs _site
+
+      # 全部寫進 staging,通過驗證後才整份取代 _site。
+      # 中途任何一步失敗都不會動到 _site —— 這就是「更新成功才替換」。
+      - name: Refresh snapshot from official sources
+        id: refresh
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          TENDER_MONTHS: ${{ inputs.tender_months || '12' }}
+          AWARD_MONTHS: ${{ inputs.award_months || '12' }}
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/stage"
+          cp -r docs "$STAGE"
+
+          hcmcp-sync \
+            --db "$RUNNER_TEMP/hcmcp.db" \
+            --tender-months "$TENDER_MONTHS" \
+            --award-months "$AWARD_MONTHS"
+
+          python scripts/export_board_data.py \
+            --db "$RUNNER_TEMP/hcmcp.db" \
+            --out "$STAGE/data/current.json" \
+            --template scripts/templates/dashboard.html \
+            --dashboard-out "$STAGE/dashboard/index.html"
+
+          # 新快照必須自身可部署且非空,才准取代 last-known-good
+          python scripts/verify_dashboard.py --site "$STAGE" --require-non-empty
+
+          rm -rf _site
+          cp -r "$STAGE" _site
+
+      # 硬失敗:要部署的東西沒過驗證就不部署,不論它是新快照還是 last-known-good。
+      - name: Verify deployable artifact
+        run: python scripts/verify_dashboard.py --site _site
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload docs artifact
+      - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+
+      # 部署完才讓 job 轉紅:網站保住 last-known-good,維護者仍會收到失敗通知。
+      # 靜默成功等於用舊快照冒充今日資料。
+      - name: Fail the run when the snapshot could not be refreshed
+        if: steps.refresh.outcome == 'failure'
+        run: |
+          echo "::error::同步或匯出失敗,已部署 last-known-good 快照。" \
+               "頁面不會顯示為最新,請查看上方 Refresh snapshot 步驟的日誌。"
+          exit 1

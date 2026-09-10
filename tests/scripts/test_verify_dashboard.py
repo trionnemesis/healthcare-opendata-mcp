@@ -90,3 +90,45 @@ class TestOpenDatasetMatrix:
         payload = _snapshot()
         payload["datasets"].pop("nhi_clinic")
         validate_snapshot(payload)
+
+
+class TestRequireNonEmpty:
+    """部署路徑的閘門:剛產生的空快照不得取代 last-known-good。
+
+    empty 對契約而言是合法狀態(委入的快照走一般驗證),但在「用新快照覆蓋舊快照」
+    的那一刻,空資料等於用看起來成功的東西蓋掉真實資料。
+    """
+
+    def _site(self, tmp_path, state: str):
+        """複製委入的 site 並改寫快照狀態。
+
+        以 exporter 自己的序列化器寫回,否則 published_payload_bytes 會與實際
+        檔案大小不符 —— 驗證器本來就該擋下那種不一致。
+        """
+        import shutil
+
+        from export_board_data import _json_text, _stabilize_size_field
+
+        site = tmp_path / "site"
+        shutil.copytree("docs", site)
+        snapshot = site / "data" / "current.json"
+        payload = json.loads(snapshot.read_text(encoding="utf-8"))
+        payload["status"]["state"] = state
+        if state == "empty":
+            payload["rows"] = []
+            payload["summary"]["pcc_tender"]["snapshot_row_count"] = 0
+            payload["status"]["source_max_date"] = None
+        _stabilize_size_field(payload, "published_payload_bytes")
+        snapshot.write_text(_json_text(payload), encoding="utf-8")
+        return site
+
+    def test_empty_snapshot_is_rejected_when_gate_is_on(self, tmp_path):
+        with pytest.raises(ValueError, match="last-known-good"):
+            verify_site(self._site(tmp_path, "empty"), require_non_empty=True)
+
+    def test_empty_snapshot_is_allowed_by_default(self, tmp_path):
+        # 委入的快照仍可能合法地是 empty;預設路徑不得因此拒絕部署
+        verify_site(self._site(tmp_path, "empty"))
+
+    def test_non_empty_snapshot_passes_the_gate(self, tmp_path):
+        verify_site(self._site(tmp_path, "fresh"), require_non_empty=True)
