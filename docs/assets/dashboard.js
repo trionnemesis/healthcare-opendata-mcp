@@ -156,6 +156,30 @@
     }
   }
 
+  // status.state 是**匯出當下**的判定。靜態頁可能被服務很久 —— 若自動同步停擺,
+  // 一份三個月前的快照會永遠自稱 fresh。這裡以「現在」重新檢查快照本身的年紀,
+  // 用的門檻就是資料集裡最嚴格的那個(不另立一個憑空的數字)。
+  // 只覆寫 fresh;degraded / empty / stale 比它嚴重,不得被降級。
+  function effectiveStatus(payload) {
+    const published = { state: payload.status.state, message: payload.status.message };
+    if (published.state !== "fresh") return published;
+    const thresholds = Object.values(payload.datasets || {})
+      .map((dataset) => dataset.stale_after_days)
+      .filter((days) => typeof days === "number" && days > 0);
+    if (thresholds.length === 0) return published;
+    const generatedAt = Date.parse(payload.generated_at);
+    if (!Number.isFinite(generatedAt)) return published;
+    const ageDays = Math.floor((Date.now() - generatedAt) / 86400000);
+    const limit = Math.min(...thresholds);
+    if (ageDays <= limit) return published;
+    return {
+      state: "stale",
+      message:
+        `此快照產生於 ${formatCount(ageDays)} 天前，已超過最嚴格的資料集門檻` +
+        `（${formatCount(limit)} 天）；自動同步可能已停擺，請勿當作今日資料。`,
+    };
+  }
+
   // 狀態不只靠顏色:三種新鮮度都以文字呈現,並在過期時附上依據的門檻。
   function freshnessLabel(dataset) {
     switch (dataset.freshness) {
@@ -203,7 +227,8 @@
     setText(elements.nhiRowCount, unknownOr(nhi.row_count, formatCount));
     setText(elements.nhiFetchedAt, unknownOr(nhi.last_fetched_at));
     renderDatasetMatrix(payload.datasets);
-    updateStatus(payload.status.state, payload.status.message);
+    const effective = effectiveStatus(payload);
+    updateStatus(effective.state, effective.message);
   }
 
   function searchableText(row) {

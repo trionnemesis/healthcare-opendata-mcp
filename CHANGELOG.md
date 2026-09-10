@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.9.0] - 2026-09-10
+
+### Added
+- **Pages 部署改為「同步 → 匯出 → 驗證 → 部署」(issue #31 第 1 項)**:先前
+  `pages.yml` 只把已提交的 `docs/` 上傳,看板**可重建但不會自己重建**。
+  - `_site` 一開始就以委入的快照當種子(**last-known-good**);sync/export 全程寫進
+    `$RUNNER_TEMP/stage`,**通過驗證且非空**才整份取代 `_site`。中途任何一步失敗都
+    不會動到 `_site` —— artifact 層級的原子性替換。
+  - 新增 `verify_dashboard.py --require-non-empty`:`empty` 對契約而言是合法狀態
+    (委入快照走一般驗證路徑),但在「用新快照覆蓋舊快照」那一刻,空資料等於用看起來
+    成功的東西蓋掉真實資料。故閘門只掛在部署路徑上。
+  - **同步失敗 → 部署 last-known-good,再讓 job 轉紅。** #31 同時要求「保留前一份
+    有效快照」與「失敗則不部署」,字面上互斥;且「失敗就不部署」會讓一個只改文案的
+    push 因為上游剛好掛掉而永遠上不了線。先部署再轉紅同時滿足四條要求,且不讓上游的
+    健康狀況綁架我們自己的靜態內容。靜默成功等於用舊快照冒充今日資料。
+  - `permissions` 維持 `contents: read` —— 評估過讓 workflow 把快照 commit 回
+    `master`,**否決**:那需要 `contents: write`,等於為了更新資料而讓部署 workflow
+    取得寫入 repo 的權限,且會產生 bot 對 master 的提交流。`_site` 是 ephemeral
+    artifact,git 裡的委入快照本來就是 last-known-good。
+  - 加上 job `timeout-minutes` 與 `concurrency` 群組(並行部署會讓兩份 artifact
+    互相覆蓋)。
+- **快照年紀的客戶端檢查**:`status.state` 是**匯出當下**的判定,被凍結在 JSON 裡。
+  靜態頁可能被服務很久 —— 自動同步一旦停擺,三個月前的快照會永遠自稱 `fresh`。
+  `dashboard.js` 改為載入時以「現在」重新檢查快照年紀,門檻取所有資料集
+  `stale_after_days` 中**最嚴格的那個**(不另立憑空的數字),超過就把橫幅覆寫為 stale。
+  **只覆寫 `fresh`**;`degraded` / `empty` / `stale` 比它嚴重,不得被降級。
+- `docs/superpowers/specs/2026-09-10-pages-auto-sync.md`。
+- `tests/scripts/test_pages_workflow.py`:以純文字解析(不引入 YAML 相依)釘住
+  workflow 的**失敗行為** —— 驗證必須在上傳與部署之前、驗證步驟不得
+  `continue-on-error`、staging 必須先驗證才准取代 `_site`、refresh 失敗必須讓 job
+  轉紅且發生在部署之後、`permissions` 不得出現 `contents: write`。順序錯了會把未驗證
+  的東西部署出去,或在同步失敗時靜默成功 —— 兩者都是無聲的錯誤。
+
+### Verified
+- 全套件 **283 tests 通過**(修改前 267,新增 16)。
+- `bandit -r src scripts -ll`:Medium 0。
+- `scripts/verify_dashboard.py --site docs` 通過;委入的 Pages artifact 未退化。
+
+### 未處理(如實記錄)
+- **每日排程未啟用**,`schedule:` 在 `pages.yml` 中維持註解。兩個理由:
+  (1) 本次 session 的 egress 政策拒絕全部五個官方 host,**無法驗證 GitHub-hosted
+  runner 能否穩定完成官方來源同步**,#31 明文要求實測證據,沒有就是沒有;
+  (2) 「不得假設 DB 已存在於 runner」意味著每次全量同步,預設回溯 12 個月的 PCC
+  半月檔,每日一次對政府站台是持續性負載,與 repo 既有的反爬倫理直接相關,屬維運決策。
+  啟用方式:以 `workflow_dispatch` 成功跑過一次、確認耗時與負載可接受後取消註解。
+  `tender_months` / `award_months` 已開為 workflow input,可先用較短視窗評估。
+- `docs/data/current.json` 仍是委入的舊快照;第一次成功的自動同步會取代它,屆時矩陣的
+  `freshness` / `stale_after_days` 欄位才會有值(目前顯示「—」)。
+
 ## [0.8.1] - 2026-09-09
 
 ### Changed
