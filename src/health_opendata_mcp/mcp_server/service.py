@@ -39,6 +39,10 @@ class QueryService:
     # CWE-400)。上限遠大於任何真實案號/關鍵字,不影響正常查詢。
     _MAX_KEYWORD_LEN = 200
     _MAX_IDENT_LEN = 200
+    # query_rows 的 where / order_by 是自由 SQL 片段,比識別符寬鬆;
+    # 2000 字元遠大於任何實際過濾條件(看板最複雜的一條約 80 字元)
+    _MAX_SQL_FRAGMENT_LEN = 2000
+    _MAX_IDENT_COUNT = 100
 
     @classmethod
     def _check_len(cls, value: str, *, name: str, max_len: int) -> str:
@@ -124,6 +128,29 @@ class QueryService:
         order_by: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> dict[str, Any]:
+        # search_records / get_record 早就有長度護欄,query_rows 先前沒有:
+        # where/columns/order_by 是會被接進 SQL 文字的自由字串,不設限時
+        # 單一呼叫就能送進 MB 級片段給 _FORBIDDEN 掃描與 sqlite parser(CWE-1284)。
+        self._check_len(dataset_id, name="dataset_id", max_len=self._MAX_IDENT_LEN)
+        for fragment, name in (
+            (where, "where"),
+            (order_by, "order_by"),
+        ):
+            if fragment is not None:
+                self._check_len(
+                    fragment, name=name, max_len=self._MAX_SQL_FRAGMENT_LEN
+                )
+        for group, name in ((columns, "columns"), (group_by, "group_by")):
+            if group is not None:
+                if len(group) > self._MAX_IDENT_COUNT:
+                    raise ValueError(
+                        f"{name} too many entries "
+                        f"({len(group)}, max {self._MAX_IDENT_COUNT})"
+                    )
+                for item in group:
+                    self._check_len(
+                        item, name=name, max_len=self._MAX_IDENT_LEN
+                    )
         try:
             result = await self._repo.query_rows(
                 dataset_id,

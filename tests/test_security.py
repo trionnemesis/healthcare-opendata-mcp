@@ -193,3 +193,313 @@ class TestDataDirPermissions:
         from health_opendata_mcp.mcp_server import __main__ as server_main
 
         assert server_main.ensure_db_dir is ensure_db_dir
+
+
+# ── 5. query_rows 輸入長度護欄(CWE-20 / CWE-1284)────────────────────────────
+
+
+class TestQueryRowsInputBounds:
+    """search_records / get_record 早有長度護欄,query_rows 先前沒有。
+
+    where / order_by 是會被接進 SQL 文字的自由字串,columns / group_by 是
+    識別符清單 —— 不設限時單一呼叫就能送進 MB 級片段給禁用語法掃描與
+    sqlite parser。護欄擋在 SQL 組裝之前,authorizer 仍是最終防線。
+    """
+
+    @pytest.fixture
+    async def service(self, tmp_path) -> QueryService:
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        return QueryService(repo)
+
+    async def test_oversized_where_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="where too long"):
+            await service.query_rows("pcc-tender", where="a=1 AND " + "x" * 2001)
+
+    async def test_oversized_order_by_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="order_by too long"):
+            await service.query_rows("pcc-tender", order_by="x" * 2001)
+
+    async def test_oversized_column_name_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="columns too long"):
+            await service.query_rows("pcc-tender", columns=["x" * 201])
+
+    async def test_too_many_columns_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="columns too many entries"):
+            await service.query_rows("pcc-tender", columns=[f"c{i}" for i in range(101)])
+
+    async def test_too_many_group_by_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="group_by too many entries"):
+            await service.query_rows(
+                "pcc-tender", group_by=[f"c{i}" for i in range(101)]
+            )
+
+    async def test_oversized_dataset_id_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="dataset_id too long"):
+            await service.query_rows("x" * 201)
+
+    async def test_normal_query_shape_still_reaches_the_repository(
+        self, service: QueryService
+    ) -> None:
+        """護欄不得誤殺正常查詢:此處應走到「dataset 不存在」而非長度錯誤。"""
+        with pytest.raises(ValueError, match="dataset 不存在"):
+            await service.query_rows(
+                "no-such-dataset",
+                columns=["case_no", "title"],
+                where="announcement_type='決標公告' AND award_price > 0",
+                order_by="case_no DESC",
+                limit=50,
+            )
+
+
+# ── 6. GitHub Actions expression injection(CWE-78)──────────────────────────
+
+
+class TestWorkflowExpressionInjection:
+    """workflow_dispatch 的 inputs 不得直接展開進 run: 的腳本文字。
+
+    先前 verify-catalog.yml 是
+      `${{ inputs.only && format('--only {0}', inputs.only) || '' }}`,
+    只要能觸發 workflow 就等於任意指令執行。修正為經 env 傳入並在 shell 內引號化。
+    """
+
+    @staticmethod
+    def _run_blocks(text: str) -> list[str]:
+        """抓出每個 `run:` 區塊的內容(以縮排判斷邊界)。"""
+        import re
+
+        blocks: list[str] = []
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            m = re.match(r"^(\s*)run: \|", line)
+            if not m:
+                inline = re.match(r"^\s*run: (.+)$", line)
+                if inline:
+                    blocks.append(inline.group(1))
+                continue
+            indent = len(m.group(1))
+            body: list[str] = []
+            for nxt in lines[i + 1:]:
+                if nxt.strip() and (len(nxt) - len(nxt.lstrip())) <= indent:
+                    break
+                body.append(nxt)
+            blocks.append("\n".join(body))
+        return blocks
+
+    @pytest.mark.parametrize(
+        "workflow",
+        ["ci.yml", "pages.yml", "verify-catalog.yml"],
+    )
+    def test_no_interpolation_inside_run_blocks(self, workflow: str) -> None:
+        from pathlib import Path
+
+        text = Path(".github/workflows") / workflow
+        for block in self._run_blocks(text.read_text(encoding="utf-8")):
+            assert "${{" not in block, (
+                f"{workflow}: run: 區塊內出現 ${{{{ }}}} 展開,"
+                "請改以 env: 傳入並在 shell 內引號化"
+            )
+
+    def test_verify_catalog_passes_inputs_through_env(self) -> None:
+        from pathlib import Path
+
+        text = (Path(".github/workflows") / "verify-catalog.yml").read_text(
+            encoding="utf-8"
+        )
+        assert "ONLY: ${{ inputs.only }}" in text
+        assert "ENABLED_ONLY: ${{ inputs.enabled_only }}" in text
+        # 引號化後才不會被 word splitting 拆成多個參數
+        assert '--only "$ONLY"' in text
+
+
+# ── 7. Kubernetes 容器強化(CWE-250 / CWE-400)───────────────────────────────
+
+
+class TestKubernetesHardening:
+    """deploy/k8s 的護欄不可在日後編輯中被摘掉。"""
+
+    @staticmethod
+    def _load(name: str) -> list[dict]:
+        import pathlib
+
+        import yaml
+
+        text = (pathlib.Path("deploy/k8s") / name).read_text(encoding="utf-8")
+        return [d for d in yaml.safe_load_all(text) if d]
+
+    @staticmethod
+    def _pod_spec(doc: dict) -> dict:
+        if doc["kind"] == "Deployment":
+            return doc["spec"]["template"]["spec"]
+        return doc["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+
+    @pytest.mark.parametrize(
+        ("filename", "container"),
+        [("deployment.yaml", "hcmcp"), ("cronjob-sync.yaml", "sync")],
+    )
+    def test_own_image_containers_have_readonly_rootfs(
+        self, filename: str, container: str
+    ) -> None:
+        spec = self._pod_spec(self._load(filename)[0])
+        named = {
+            c["name"]: c
+            for c in spec.get("containers", []) + spec.get("initContainers", [])
+        }
+        assert named[container]["securityContext"]["readOnlyRootFilesystem"] is True
+
+    @pytest.mark.parametrize(
+        "filename", ["deployment.yaml", "cronjob-sync.yaml"]
+    )
+    def test_every_container_has_memory_limits(self, filename: str) -> None:
+        """沒有上限時單一 pod 可以吃光 node(CWE-400)。"""
+        spec = self._pod_spec(self._load(filename)[0])
+        for c in spec.get("containers", []) + spec.get("initContainers", []):
+            limits = c.get("resources", {}).get("limits", {})
+            assert "memory" in limits, f"{filename}:{c['name']} 缺 memory limit"
+
+    @pytest.mark.parametrize(
+        "filename", ["deployment.yaml", "cronjob-sync.yaml"]
+    )
+    def test_every_container_drops_all_capabilities(self, filename: str) -> None:
+        spec = self._pod_spec(self._load(filename)[0])
+        for c in spec.get("containers", []) + spec.get("initContainers", []):
+            sc = c["securityContext"]
+            assert sc["allowPrivilegeEscalation"] is False, c["name"]
+            assert sc["capabilities"]["drop"] == ["ALL"], c["name"]
+
+    def test_readonly_rootfs_containers_get_a_writable_tmp(self) -> None:
+        """唯讀 rootfs 若沒有可寫 /tmp,sqlite 暫存檔會讓容器在執行期才爆。"""
+        for filename, container in (
+            ("deployment.yaml", "hcmcp"),
+            ("cronjob-sync.yaml", "sync"),
+        ):
+            spec = self._pod_spec(self._load(filename)[0])
+            named = {
+                c["name"]: c
+                for c in spec.get("containers", []) + spec.get("initContainers", [])
+            }
+            mounts = {m["mountPath"] for m in named[container]["volumeMounts"]}
+            assert "/tmp" in mounts, f"{filename}:{container} 缺可寫的 /tmp"
+            assert any(v["name"] == "tmp" for v in spec["volumes"])
+
+    def test_network_policy_scopes_ingress_to_the_server_port(self) -> None:
+        """MCP server 本身無認證,ClusterIP 等於同叢集全開;網路層要補這道門。"""
+        policy = self._load("networkpolicy.yaml")[0]
+        assert policy["kind"] == "NetworkPolicy"
+        assert policy["spec"]["podSelector"]["matchLabels"] == {"app": "hcmcp"}
+        assert policy["spec"]["policyTypes"] == ["Ingress"]
+        ports = policy["spec"]["ingress"][0]["ports"]
+        assert ports == [{"protocol": "TCP", "port": 8000}]
+
+
+# ── 8. query_rows 注入防線矩陣(CWE-89)──────────────────────────────────────
+
+
+class TestQueryRowsInjectionMatrix:
+    """query_rows 的 where/order_by 是自由 SQL 片段,防線分兩層:
+
+      layer 1  query_guard 的禁用語法掃描(擋 ; -- pragma attach 等)
+      layer 2  mode=ro 連線 + sqlite authorizer 白名單(只准讀那一張物化表)
+
+    layer 1 是黑名單,本來就擋不住 UNION / 子查詢 —— 這正是 layer 2 存在的理由。
+    本測試把「兩層加起來有擋住」釘死,避免日後有人以為 layer 1 夠用而拿掉 layer 2。
+    """
+
+    @pytest.fixture
+    def db(self, tmp_path) -> str:
+        import sqlite3
+
+        path = str(tmp_path / "m.db")
+        con = sqlite3.connect(path)
+        con.executescript(
+            "CREATE TABLE ds_public(id INTEGER, title TEXT);"
+            "INSERT INTO ds_public VALUES (1,'public row');"
+            "CREATE TABLE secrets(token TEXT);"
+            "INSERT INTO secrets VALUES ('SUPER-SECRET-TOKEN');"
+        )
+        con.commit()
+        con.close()
+        return path
+
+    @pytest.mark.parametrize(
+        "fragment",
+        [
+            pytest.param({"where": "1=1; DROP TABLE secrets"}, id="terminator"),
+            pytest.param({"where": "1=1 --"}, id="comment-truncation"),
+            pytest.param(
+                {"where": "1=1 UNION SELECT token FROM secrets"}, id="union"
+            ),
+            pytest.param(
+                {"where": "(SELECT token FROM secrets) IS NOT NULL"}, id="subquery"
+            ),
+            pytest.param(
+                {"where": "1=1 UNION SELECT name FROM sqlite_master"},
+                id="schema-enumeration",
+            ),
+            pytest.param(
+                {"where": "1=1 AND pragma_table_info('secrets')"}, id="pragma"
+            ),
+            pytest.param(
+                {"where": "load_extension('/tmp/x.so')"}, id="load-extension"
+            ),
+            pytest.param(
+                {"where": "1=1 ATTACH DATABASE '/etc/passwd' AS p"}, id="attach"
+            ),
+            pytest.param(
+                {"where": "1=1; UPDATE ds_public SET title='x'"}, id="write"
+            ),
+            pytest.param(
+                {
+                    "order_by": "(WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL "
+                    "SELECT x+1 FROM c) SELECT count(*) FROM c)"
+                },
+                id="recursive-cte",
+            ),
+        ],
+    )
+    def test_attack_never_reaches_data_outside_the_allowed_table(
+        self, db: str, fragment: dict
+    ) -> None:
+        import sqlite3
+
+        from health_opendata_mcp.domain.query_guard import (
+            QueryValidationError,
+            build_select,
+        )
+        from health_opendata_mcp.repository.query_executor import (
+            QueryDeniedError,
+            execute_readonly,
+        )
+
+        try:
+            sql, effective = build_select("ds_public", limit=5, **fragment)
+        except QueryValidationError:
+            return  # layer 1 擋下
+        with pytest.raises((QueryDeniedError, sqlite3.DatabaseError)):
+            execute_readonly(db, "ds_public", sql, effective)  # layer 2 擋下
+
+    def test_legitimate_query_still_returns_rows(self, db: str) -> None:
+        """防線不得誤殺正常查詢。"""
+        from health_opendata_mcp.domain.query_guard import build_select
+        from health_opendata_mcp.repository.query_executor import execute_readonly
+
+        sql, effective = build_select(
+            "ds_public", columns=["title"], where="id=1", limit=5
+        )
+        assert execute_readonly(db, "ds_public", sql, effective).rows == (
+            ("public row",),
+        )
+
+    def test_secret_table_is_never_readable_even_directly(self, db: str) -> None:
+        """authorizer 白名單是以「允許的那張表」為界,不是以語法為界。"""
+        import sqlite3
+
+        from health_opendata_mcp.domain.query_guard import build_select
+        from health_opendata_mcp.repository.query_executor import (
+            QueryDeniedError,
+            execute_readonly,
+        )
+
+        sql, effective = build_select("secrets", limit=5)
+        with pytest.raises((QueryDeniedError, sqlite3.DatabaseError)):
+            execute_readonly(db, "ds_public", sql, effective)

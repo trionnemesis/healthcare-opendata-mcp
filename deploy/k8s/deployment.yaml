@@ -34,6 +34,14 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            # 同 cronjob 的 upload 容器:gcloud 會寫自己的設定目錄,
+            # 唯讀化需連帶改 CLOUDSDK_CONFIG,無叢集可驗證前不動第三方 image
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
           volumeMounts:
             - name: db
               mountPath: /data
@@ -45,6 +53,9 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            # 本容器只讀 /data 的 DB,不寫 root filesystem。
+            # 唯一可能的寫入是 sqlite 的暫存檔,故另掛一個可寫的 /tmp。
+            readOnlyRootFilesystem: true
           env:
             - name: HCMCP_TRANSPORT
               value: "http"
@@ -58,6 +69,8 @@ spec:
             - name: db
               mountPath: /data
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -80,3 +93,6 @@ spec:
         - name: db
           emptyDir:
             sizeLimit: 1Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
