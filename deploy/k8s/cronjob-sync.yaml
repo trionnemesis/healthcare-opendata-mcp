@@ -32,12 +32,23 @@ spec:
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
+                # 本容器只寫 /data 與 /tmp,root filesystem 可唯讀
+                readOnlyRootFilesystem: true
               env:
                 - name: HCMCP_DB
                   value: /data/hcmcp.db
+              # ETL 會把半月 XML 解進記憶體;沒有上限時單一 job 可以吃光 node
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
               volumeMounts:
                 - name: db
                   mountPath: /data
+                - name: tmp
+                  mountPath: /tmp
             - name: upload
               image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
               command: ["gcloud", "storage", "cp", "/data/hcmcp.db", "gs://HCMCP_BUCKET/hcmcp.db"]
@@ -45,6 +56,16 @@ spec:
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
+                # 刻意不設 readOnlyRootFilesystem:gcloud / kubectl 會寫自己的
+                # 設定與快取目錄($HOME/.config、$HOME/.kube),要唯讀化得連帶
+                # 改 CLOUDSDK_CONFIG / KUBECACHEDIR 並掛可寫目錄。本次無可連外
+                # 的叢集或 registry 可驗證,不在未驗證的情況下動第三方 image。
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
               volumeMounts:
                 - name: db
                   mountPath: /data
@@ -55,8 +76,17 @@ spec:
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
               command: ["kubectl", "rollout", "restart", "deployment/hcmcp"]
           volumes:
             - name: db
               emptyDir:
                 sizeLimit: 1Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi

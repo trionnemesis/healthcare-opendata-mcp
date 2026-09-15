@@ -1,0 +1,39 @@
+# hcmcp MCP server 本身沒有認證(見 service.yaml 的註記),ClusterIP 預設
+# 等於「同叢集任何 pod 都打得到 8000」。這份 NetworkPolicy 把入站收斂成
+# 「只有明確標記過的用戶端 pod 可以連」,讓網路層補上應用層沒有的那道門。
+#
+# 套用前必須先改:把 from 的 podSelector 換成貴叢集實際的用戶端標籤,
+# 並確認 CNI 支援 NetworkPolicy(GKE 需啟用 Dataplane V2 或 Calico;
+# 未啟用時 API 會收下物件但不會強制執行,等於沒有防護)。
+#
+# 刻意不寫 egress:server pod 的 initContainer 要連 GCS 取 DB,
+# 亂收斂 egress 會讓 pod 起不來。要做 egress 收斂請另開一份,
+# 並在可連外的叢集上實測過再套。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hcmcp-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: hcmcp
+  policyTypes:
+    - Ingress
+  ingress:
+    # 1) 應用流量:只開 8000,且只給標記為用戶端的 pod
+    - from:
+        - podSelector:
+            matchLabels:
+              hcmcp-client: "true"
+      ports:
+        - protocol: TCP
+          port: 8000
+    # 2) kubelet 的 readiness/liveness probe 來自 node IP,不是 pod IP。
+    #    多數 CNI 會放行 node→pod 的 probe,但有些不會 —— 若套用後 pod
+    #    一直 Not Ready,請把貴叢集的 node CIDR 填進來後取消註解。
+    # - from:
+    #     - ipBlock:
+    #         cidr: 10.0.0.0/8   # ← 換成實際的 node CIDR
+    #   ports:
+    #     - protocol: TCP
+    #       port: 8000

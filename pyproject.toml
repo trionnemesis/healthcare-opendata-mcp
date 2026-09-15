@@ -21,12 +21,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
+    # >=9.0.3:更早的版本受 PYSEC-2026-1845 影響(/tmp/pytest-of-{user} 可預測路徑,
+    # 本機使用者可藉此 DoS 或提權)。僅影響開發/CI 環境,不進 runtime 相依。
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.23",
     # defusedxml 未內建 type stubs;缺此套件會讓 mypy 多報 import-untyped
     "types-defusedxml>=0.7",
     "bandit>=1.7",
     "pip-audit>=2.7",
+    # tests/test_security.py 解析 deploy/k8s 的 manifest;bandit 會帶進 PyYAML,
+    # 但測試不該相依於「某個工具剛好裝了它」,故明確宣告
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]
