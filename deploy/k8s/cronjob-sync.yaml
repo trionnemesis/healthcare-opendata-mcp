@@ -32,12 +32,16 @@ spec:
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
+                # ETL 的所有寫入都落在 /data 掛載卷,映像層無需可寫(CWE-732)
+                readOnlyRootFilesystem: true
               env:
                 - name: HCMCP_DB
                   value: /data/hcmcp.db
               volumeMounts:
                 - name: db
                   mountPath: /data
+                - name: tmp
+                  mountPath: /tmp
             - name: upload
               image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
               command: ["gcloud", "storage", "cp", "/data/hcmcp.db", "gs://HCMCP_BUCKET/hcmcp.db"]
@@ -56,7 +60,13 @@ spec:
                 capabilities:
                   drop: ["ALL"]
               command: ["kubectl", "rollout", "restart", "deployment/hcmcp"]
+          # upload(gcloud)與 rollout(kubectl)兩個第三方容器刻意不加
+          # readOnlyRootFilesystem:它們會寫 ~/.config/gcloud 與 ~/.kube/cache,
+          # 本次未能在真實叢集驗證,故不在未驗證的前提下改動(見報告 E 節)。
           volumes:
             - name: db
               emptyDir:
                 sizeLimit: 1Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
