@@ -27,6 +27,8 @@ dev = [
     "types-defusedxml>=0.7",
     "bandit>=1.7",
     "pip-audit>=2.7",
+    # tests/test_supply_chain.py 解析 workflow / k8s 清單;不可只靠 fastmcp 的遞移相依
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]

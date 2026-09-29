@@ -45,6 +45,9 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            # 唯讀根檔案系統:本容器只讀 /data 的 DB,執行期不需寫入映像層。
+            # 攻擊者取得 RCE 後無法落地 payload 或改寫程式碼(CWE-732)。
+            readOnlyRootFilesystem: true
           env:
             - name: HCMCP_TRANSPORT
               value: "http"
@@ -58,6 +61,9 @@ spec:
             - name: db
               mountPath: /data
               readOnly: true
+            # readOnlyRootFilesystem 下唯一的可寫路徑;Python/uvicorn 的暫存需求走此處
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -80,3 +86,6 @@ spec:
         - name: db
           emptyDir:
             sizeLimit: 1Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
