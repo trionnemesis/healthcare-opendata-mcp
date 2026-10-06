@@ -36,8 +36,22 @@ jobs:
 
       # 本 script 只讀:不寫 DB、不改 catalog.py、不翻 enabled。
       # 輸出的 verified_at / verified_note 需人工 review 後以 PR 填入。
+      #
+      # inputs 一律經 env 傳入並以引號取值,不直接寫在 run: 的指令字串裡。
+      # ${{ }} 是在 shell 執行前做文字替換,把 inputs.only 插進指令等於讓
+      # 輸入值變成 shell 語法 —— 例如 `x; curl … | sh` 會被當指令執行
+      # (CWE-78,GitHub Actions script injection)。經 env 傳入則永遠是資料。
       - name: Probe catalog sources
+        env:
+          ONLY: ${{ inputs.only }}
+          ENABLED_ONLY: ${{ inputs.enabled_only }}
         run: |
-          python scripts/verify_catalog_sources.py \
-            ${{ inputs.only && format('--only {0}', inputs.only) || '' }} \
-            ${{ inputs.enabled_only && '--enabled-only' || '' }}
+          set -euo pipefail
+          args=()
+          if [ -n "$ONLY" ]; then
+            args+=(--only "$ONLY")
+          fi
+          if [ "$ENABLED_ONLY" = "true" ]; then
+            args+=(--enabled-only)
+          fi
+          python scripts/verify_catalog_sources.py ${args[@]+"${args[@]}"}

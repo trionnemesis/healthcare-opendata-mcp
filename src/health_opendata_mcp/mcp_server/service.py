@@ -39,12 +39,35 @@ class QueryService:
     # CWE-400)。上限遠大於任何真實案號/關鍵字,不影響正常查詢。
     _MAX_KEYWORD_LEN = 200
     _MAX_IDENT_LEN = 200
+    # query_rows 的 SQL 片段上限。片段會被直接拼進 SELECT 字串,無上限時
+    # 單次呼叫即可送進 MB 級片段,在 query_guard 的 regex 掃描與 SQLite 的
+    # parser 兩處各吃一份資源(CWE-20/CWE-400)。2000 字遠大於任何真實
+    # where/order_by;超限屬明顯濫用,在組 SQL 前就擋掉。
+    _MAX_FRAGMENT_LEN = 2000
+    _MAX_FRAGMENT_ITEMS = 50
 
     @classmethod
     def _check_len(cls, value: str, *, name: str, max_len: int) -> str:
         if len(value) > max_len:
             raise ValueError(f"{name} too long ({len(value)} chars, max {max_len})")
         return value
+
+    @classmethod
+    def _check_fragment(cls, value: str | None, *, name: str) -> None:
+        if value is not None:
+            cls._check_len(value, name=name, max_len=cls._MAX_FRAGMENT_LEN)
+
+    @classmethod
+    def _check_fragments(cls, values: list[str] | None, *, name: str) -> None:
+        if values is None:
+            return
+        if len(values) > cls._MAX_FRAGMENT_ITEMS:
+            raise ValueError(
+                f"{name} has too many items "
+                f"({len(values)}, max {cls._MAX_FRAGMENT_ITEMS})"
+            )
+        for i, item in enumerate(values):
+            cls._check_len(item, name=f"{name}[{i}]", max_len=cls._MAX_FRAGMENT_LEN)
 
     def __init__(
         self, repo: SqliteRepository, enricher: PccDetailEnricher | None = None
@@ -94,6 +117,7 @@ class QueryService:
     async def get_dataset(
         self, dataset_id: str, sample_rows: int = 0
     ) -> dict[str, Any]:
+        self._check_len(dataset_id, name="dataset_id", max_len=self._MAX_IDENT_LEN)
         meta = await self._repo.get_dataset(dataset_id)
         if meta is None:
             raise ValueError(f"dataset 不存在: {dataset_id}")
@@ -124,6 +148,13 @@ class QueryService:
         order_by: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> dict[str, Any]:
+        # 長度護欄先行:片段在 query_guard 的 regex 與 SQLite parser 兩處
+        # 各被完整掃過一次,先擋掉才不會把資源花在明顯濫用的輸入上。
+        self._check_len(dataset_id, name="dataset_id", max_len=self._MAX_IDENT_LEN)
+        self._check_fragment(where, name="where")
+        self._check_fragment(order_by, name="order_by")
+        self._check_fragments(columns, name="columns")
+        self._check_fragments(group_by, name="group_by")
         try:
             result = await self._repo.query_rows(
                 dataset_id,
