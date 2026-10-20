@@ -39,6 +39,11 @@ class QueryService:
     # CWE-400)。上限遠大於任何真實案號/關鍵字,不影響正常查詢。
     _MAX_KEYWORD_LEN = 200
     _MAX_IDENT_LEN = 200
+    # SQL 片段(where / order_by)可合理長於識別符,但仍須有上限:
+    # query_guard 的黑名單掃描與 SQLite parser 都會吃下整個字串。
+    _MAX_EXPR_LEN = 1000
+    # columns / group_by 的元素個數上限 —— 每個元素都會被組進 SELECT 清單。
+    _MAX_LIST_ITEMS = 50
 
     @classmethod
     def _check_len(cls, value: str, *, name: str, max_len: int) -> str:
@@ -124,6 +129,21 @@ class QueryService:
         order_by: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> dict[str, Any]:
+        # 與 search_records / get_record / get_tender_detail 一致的長度護欄。
+        # 本工具原先完全未設限,是四個查詢工具中唯一的缺口(CWE-20/CWE-400)。
+        self._check_len(dataset_id, name="dataset_id", max_len=self._MAX_IDENT_LEN)
+        for name, value in (("where", where), ("order_by", order_by)):
+            if value is not None:
+                self._check_len(value, name=name, max_len=self._MAX_EXPR_LEN)
+        for name, items in (("columns", columns), ("group_by", group_by)):
+            if items is None:
+                continue
+            if len(items) > self._MAX_LIST_ITEMS:
+                raise ValueError(
+                    f"{name} too many items ({len(items)}, max {self._MAX_LIST_ITEMS})"
+                )
+            for item in items:
+                self._check_len(item, name=name, max_len=self._MAX_IDENT_LEN)
         try:
             result = await self._repo.query_rows(
                 dataset_id,

@@ -193,3 +193,70 @@ class TestDataDirPermissions:
         from health_opendata_mcp.mcp_server import __main__ as server_main
 
         assert server_main.ensure_db_dir is ensure_db_dir
+
+
+# ── 5. query_rows 參數長度上限(CWE-20 / CWE-400)─────────────────────────────
+
+
+class TestQueryRowsLengthLimits:
+    """query_rows 原先是四個查詢工具中唯一完全未設長度上限的缺口。
+
+    where / order_by 會被 query_guard 的黑名單正規掃描、再交給 SQLite parser;
+    columns / group_by 的每個元素都會被組進 SELECT 清單。全部須有上限。
+    """
+
+    @pytest.fixture
+    def service(self, tmp_path) -> QueryService:
+        return QueryService(SqliteRepository(str(tmp_path / "t.db")))
+
+    async def test_dataset_id_too_long_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="dataset_id too long"):
+            await service.query_rows("x" * 201)
+
+    async def test_where_too_long_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="where too long"):
+            await service.query_rows("ds-a", where="a=1 AND " + "b" * 1001)
+
+    async def test_order_by_too_long_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="order_by too long"):
+            await service.query_rows("ds-a", order_by="x" * 1001)
+
+    async def test_too_many_columns_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="columns too many items"):
+            await service.query_rows("ds-a", columns=["c"] * 51)
+
+    async def test_too_many_group_by_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="group_by too many items"):
+            await service.query_rows("ds-a", group_by=["c"] * 51)
+
+    async def test_single_column_name_too_long_rejected(
+        self, service: QueryService
+    ) -> None:
+        with pytest.raises(ValueError, match="columns too long"):
+            await service.query_rows("ds-a", columns=["c" * 201])
+
+    async def test_within_limits_reaches_dataset_lookup(self, tmp_path) -> None:
+        """上限之內的輸入不得被長度檢查誤擋。
+
+        空 DB 下應落到既有的「dataset 不存在」訊息,證明請求已通過長度檢查
+        進入正常查詢流程(而非被新護欄擋掉)。
+        """
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        service = QueryService(repo)
+        with pytest.raises(ValueError, match="dataset 不存在"):
+            await service.query_rows(
+                "ds-a",
+                columns=["title"],
+                where="title IS NOT NULL",
+                order_by="title",
+                group_by=["title"],
+            )
+
+    async def test_internal_vendor_stats_path_unaffected(self, tmp_path) -> None:
+        """get_vendor_stats 走 repo 直呼,不受工具層護欄影響(非回歸)。"""
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        service = QueryService(repo)
+        with pytest.raises(ValueError, match="dataset 不存在"):
+            await service.get_vendor_stats("pcc-tender")
