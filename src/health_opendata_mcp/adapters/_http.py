@@ -30,26 +30,41 @@ def max_download_bytes() -> int:
 
 async def default_http_get(url: str) -> bytes:
     limit = max_download_bytes()
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-        async with client.stream("GET", url) as resp:
-            if resp.status_code in _BLOCKED_STATUS:
-                raise BlockedError(f"blocked ({resp.status_code}): {url}")
-            resp.raise_for_status()
+    # HTTPX 自動跟隨轉址時會先 aread() 中間回應,繞過下方串流護欄。
+    # 改用 next_request 保留 HTTPX 的 URL/cookie/header 規則,逐跳檢查。
+    async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+        request = client.build_request("GET", url)
+        for _ in range(client.max_redirects + 1):
+            resp = await client.send(request, stream=True)
+            try:
+                if resp.status_code in _BLOCKED_STATUS:
+                    raise BlockedError(f"blocked ({resp.status_code}): {url}")
+                next_request = resp.next_request
+                if next_request is None:
+                    resp.raise_for_status()
 
-            # 已宣告超量就不必開始下載
-            declared = resp.headers.get("Content-Length")
-            if declared and declared.isdigit() and int(declared) > limit:
-                raise BlockedError(
-                    f"response exceeds {limit} bytes (declared Content-Length): {url}"
-                )
-
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in resp.aiter_bytes():
-                total += len(chunk)
-                if total > limit:
+                # 每跳都檢查;已宣告超量就不必開始下載。
+                declared = resp.headers.get("Content-Length")
+                if declared and declared.isdigit() and int(declared) > limit:
                     raise BlockedError(
-                        f"response exceeds {limit} bytes, download aborted: {url}"
+                        f"response exceeds {limit} bytes (declared Content-Length): {url}"
                     )
-                chunks.append(chunk)
-            return b"".join(chunks)
+
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > limit:
+                        raise BlockedError(
+                            f"response exceeds {limit} bytes, download aborted: {url}"
+                        )
+                    if next_request is None:
+                        chunks.append(chunk)
+                if next_request is None:
+                    return b"".join(chunks)
+                request = next_request
+            finally:
+                await resp.aclose()
+        raise httpx.TooManyRedirects(
+            "Exceeded maximum allowed redirects.", request=request
+        )
