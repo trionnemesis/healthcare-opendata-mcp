@@ -50,7 +50,7 @@ def _check_hop(url: str) -> None:
     """檢查一個即將發出的請求目標。初始 URL 與每個轉址目標都會經過這裡。"""
     try:
         parts = urlsplit(url)
-        parts.port  # 觸發 port 格式驗證
+        _ = parts.port  # 觸發 port 格式驗證(壞 port 會在這裡 ValueError)
     except ValueError as exc:
         raise UnsafeRedirectError(f"malformed outbound URL: {url!r}") from exc
 

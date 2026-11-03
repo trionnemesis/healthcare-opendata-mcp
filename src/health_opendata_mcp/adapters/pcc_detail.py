@@ -124,7 +124,7 @@ def default_client() -> HttpClient:
             )
             self._session_ready = False
 
-        async def _send(self, request: "httpx.Request") -> HttpResp:
+        async def _send(self, request: httpx.Request) -> HttpResp:
             """送出請求並以位元組上限讀回。
 
             httpx 自動跟隨轉址時會把中間回應整份緩衝(繞過上限),故改為手動
