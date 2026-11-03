@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -32,8 +33,20 @@ from health_opendata_mcp.contracts import BlockedError
 _BLOCKED_STATUS = {403, 429}
 _REDIRECT_STATUS = {301, 302, 303, 307, 308}
 
-# 單一回應讀取上限。與 scripts/verify_catalog_sources.DEFAULT_MAX_BYTES 一致。
+# 單一回應讀取上限。與 scripts/verify_catalog_sources.DEFAULT_MAX_BYTES 一致 ——
+# 那是維護者對同一批來源已經選定的天花板,不另立一個數字。
 MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+# 環境變數覆寫(採自 PR #45):官方 dataset 日後成長時,維運端不必改程式。
+# 只接受正整數;非法值回退預設,不靜默放寬也不讓 server 起不來。
+MAX_BYTES_ENV = "HCMCP_MAX_DOWNLOAD_BYTES"
+
+
+def max_download_bytes() -> int:
+    """生效的下載上限(bytes)。HCMCP_MAX_DOWNLOAD_BYTES 可覆寫。"""
+    raw = os.environ.get(MAX_BYTES_ENV, "")
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return MAX_RESPONSE_BYTES
 # 轉址跳數上限(httpx 預設 20;開放資料下載不需要那麼多)。
 MAX_REDIRECTS = 5
 
@@ -97,13 +110,14 @@ async def read_capped(response: httpx.Response, url: str, max_bytes: int) -> byt
 
 
 async def default_http_get(
-    url: str, *, max_bytes: int = MAX_RESPONSE_BYTES
+    url: str, *, max_bytes: int | None = None
 ) -> bytes:
     """GET 一個官方來源 URL,回傳受大小上限約束的 body。
 
     成功條件與舊版相同(403/429 → BlockedError;其餘非 2xx → raise_for_status),
     正常大小的回應回傳完全相同的 bytes。
     """
+    max_bytes = max_download_bytes() if max_bytes is None else max_bytes
     async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
         current = url
         for _ in range(MAX_REDIRECTS + 1):

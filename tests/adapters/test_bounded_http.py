@@ -12,11 +12,13 @@ import httpx
 import pytest
 
 from health_opendata_mcp.adapters._http import (
+    MAX_BYTES_ENV,
     MAX_REDIRECTS,
     MAX_RESPONSE_BYTES,
     ResponseTooLargeError,
     UnsafeRedirectError,
     default_http_get,
+    max_download_bytes,
 )
 from health_opendata_mcp.adapters.pcc_detail import default_client
 from health_opendata_mcp.contracts import BlockedError
@@ -269,3 +271,36 @@ class TestPccDetailClientIsBounded:
         client = default_client()
         with pytest.raises(httpx.TooManyRedirects):
             await client.get("https://web.pcc.gov.tw/tps/loop")
+
+
+class TestEnvOverride:
+    """下載上限可由環境變數覆寫(採自 PR #45)。"""
+
+    def test_env_override_is_honoured(self, monkeypatch):
+        monkeypatch.setenv(MAX_BYTES_ENV, "4096")
+        assert max_download_bytes() == 4096
+
+    @pytest.mark.parametrize("bad", ["", "0", "-1", "abc", "1.5", " 100"])
+    def test_invalid_override_falls_back_to_default(self, monkeypatch, bad):
+        """非法值回退預設 —— 不靜默放寬,也不讓行程起不來。"""
+        monkeypatch.setenv(MAX_BYTES_ENV, bad)
+        assert max_download_bytes() == MAX_RESPONSE_BYTES
+
+    def test_unset_uses_default(self, monkeypatch):
+        monkeypatch.delenv(MAX_BYTES_ENV, raising=False)
+        assert max_download_bytes() == MAX_RESPONSE_BYTES
+
+    async def test_override_actually_bounds_the_download(self, monkeypatch):
+        monkeypatch.setenv(MAX_BYTES_ENV, "1024")
+        _patch_transport(
+            monkeypatch, lambda req: httpx.Response(200, content=b"x" * 4096)
+        )
+        with pytest.raises(ResponseTooLargeError):
+            await default_http_get(_URL)
+
+    async def test_explicit_max_bytes_still_wins_over_env(self, monkeypatch):
+        monkeypatch.setenv(MAX_BYTES_ENV, "1024")
+        _patch_transport(
+            monkeypatch, lambda req: httpx.Response(200, content=b"x" * 2048)
+        )
+        assert len(await default_http_get(_URL, max_bytes=4096)) == 2048

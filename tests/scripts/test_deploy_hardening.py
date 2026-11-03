@@ -1,15 +1,29 @@
-"""部署設定的安全回歸測試 —— 以純文字解析,不引入 YAML 相依。
+"""部署設定中「tests/test_supply_chain.py 沒有覆蓋」的那幾項。
 
-與 test_workflow_injection.py 同一風格:釘的是設定的**安全性質**,
-而不是 YAML 語法。這些性質一旦被後續編輯悄悄拿掉,測試要紅。
+分工刻意明確,避免同一個性質被兩個檔案各斷言一次(改一次要改兩處):
 
-驗證基礎(2026-11,本機實測,非推測):
+  test_supply_chain.py(採自 PR #38,以 PyYAML 解析)
+    - workflow:run: 內不得內插 ${{ }}、action 一律釘 commit SHA、
+      每個 workflow 都要宣告 permissions
+    - k8s:自有容器(hcmcp / sync)須 readOnlyRootFilesystem + 可寫 /tmp、
+      drop ALL、禁提權
+
+  本檔(純文字解析,不需 YAML)
+    - FastMCP banner 的 pypi egress 已關閉(deployment 與 Dockerfile 兩處)
+    - Dockerfile 不以 root 執行
+    - DB 卷仍是唯讀掛載
+    - pod 層 runAsNonRoot / seccomp
+    - **每一個**容器(含 gcloud / kubectl 第三方容器)都 drop ALL 且禁提權
+      —— test_supply_chain 只檢查自有容器,這裡守住第三方容器不被漏掉
+
+FASTMCP_SHOW_SERVER_BANNER 的驗證基礎(2026-11,本機實測,非推測):
   - 以 audit hook 記錄 hcmcp server 啟動 + 一次 /healthz 期間的所有寫入,
     唯一落在 root filesystem 的是 $HOME/.local/share/fastmcp/version_cache.json
   - 該寫入來自 FastMCP 的啟動 banner(會向 pypi.org 查版本);
-    FASTMCP_SHOW_SERVER_BANNER=false 之後不再發生,/healthz 仍回 200
+    清掉快取後啟動即重新產生,設 FASTMCP_SHOW_SERVER_BANNER=false 後不再產生,
+    /healthz 仍回 200
   - 把 $HOME 設為不可寫再啟動,server 一樣正常服務(fastmcp 吞掉 OSError)
-  未在真實 K8s 叢集驗證(本環境無叢集,也無法連外)。
+  未在真實 K8s 叢集驗證(本環境無叢集,也無 docker daemon)。
 """
 from __future__ import annotations
 
@@ -42,40 +56,27 @@ def _server_container_block(text: str) -> str:
     return "\n".join(out)
 
 
-class TestServerContainerHardening:
-    def test_root_filesystem_is_read_only(self):
-        block = _server_container_block(DEPLOYMENT.read_text(encoding="utf-8"))
-        assert "readOnlyRootFilesystem: true" in block
+class TestFastMcpBannerEgressDisabled:
+    """banner 會向 pypi.org 查版本 —— 正式 pod 不該有這個 egress。"""
 
-    def test_writable_tmp_is_mounted(self):
-        """唯讀 rootfs 必須配一個可寫 /tmp,否則 Python tempfile 會炸。"""
-        block = _server_container_block(DEPLOYMENT.read_text(encoding="utf-8"))
-        assert "mountPath: /tmp" in block
-        assert "- name: tmp" in DEPLOYMENT.read_text(encoding="utf-8")
-
-    def test_fastmcp_banner_egress_is_disabled(self):
-        """banner 會向 pypi.org 查版本 —— 正式 pod 不應有這個 egress。"""
+    def test_deployment_sets_the_flag(self):
         block = _server_container_block(DEPLOYMENT.read_text(encoding="utf-8"))
         assert "FASTMCP_SHOW_SERVER_BANNER" in block
         assert 'value: "false"' in block
 
-    def test_privilege_escalation_and_capabilities_still_locked(self):
-        """既有護欄不得在後續編輯中退場。"""
-        block = _server_container_block(DEPLOYMENT.read_text(encoding="utf-8"))
-        assert "allowPrivilegeEscalation: false" in block
-        assert 'drop: ["ALL"]' in block
+    def test_image_disables_it_by_default(self):
+        assert "FASTMCP_SHOW_SERVER_BANNER=false" in DOCKERFILE.read_text(
+            encoding="utf-8"
+        )
 
+
+class TestServerContainerExtras:
     def test_db_volume_is_mounted_read_only(self):
         block = _server_container_block(DEPLOYMENT.read_text(encoding="utf-8"))
         assert "readOnly: true" in block
 
 
 class TestImageDefaults:
-    def test_image_disables_banner_by_default(self):
-        assert "FASTMCP_SHOW_SERVER_BANNER=false" in DOCKERFILE.read_text(
-            encoding="utf-8"
-        )
-
     def test_image_does_not_run_as_root(self):
         text = DOCKERFILE.read_text(encoding="utf-8")
         assert re.search(r"^USER 10001\s*$", text, re.MULTILINE)
@@ -90,6 +91,7 @@ class TestPodLevelInvariants:
 
     @pytest.mark.parametrize("path", [DEPLOYMENT, CRONJOB], ids=lambda p: p.name)
     def test_every_container_drops_all_capabilities(self, path: Path):
+        """含 gcloud / kubectl 第三方容器 —— test_supply_chain 只看自有容器。"""
         text = path.read_text(encoding="utf-8")
         containers = len(re.findall(r"^\s*- name: \S+\n\s+image: ", text, re.MULTILINE))
         assert containers > 0, "找不到任何容器,測試會假性通過"
