@@ -73,7 +73,7 @@ def _check_hop(url: str) -> None:
         raise UnsafeRedirectError("outbound URL must not be an IP literal")
 
 
-async def _read_capped(response: httpx.Response, url: str, max_bytes: int) -> bytes:
+async def read_capped(response: httpx.Response, url: str, max_bytes: int) -> bytes:
     """串流讀取 body,累計超過上限即中止 —— 不是讀完才檢查。
 
     Content-Length 若已宣告超量就連下載都不開始。
@@ -118,7 +118,7 @@ async def default_http_get(
                 if resp.status_code in _BLOCKED_STATUS:
                     raise BlockedError(f"blocked ({resp.status_code}): {current}")
                 resp.raise_for_status()
-                return await _read_capped(resp, current, max_bytes)
+                return await read_capped(resp, current, max_bytes)
             finally:
                 await resp.aclose()
         raise UnsafeRedirectError(

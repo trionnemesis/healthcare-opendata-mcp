@@ -18,6 +18,7 @@ from health_opendata_mcp.adapters._http import (
     UnsafeRedirectError,
     default_http_get,
 )
+from health_opendata_mcp.adapters.pcc_detail import default_client
 from health_opendata_mcp.contracts import BlockedError
 
 _URL = "https://info.nhi.gov.tw/api/iode0000s01/Dataset?rId=A21030000I-D21004-009"
@@ -175,3 +176,96 @@ class TestStatusHandlingUnchanged:
         """呼叫端(pipeline)已有的 BlockedError 處理路徑能接住新例外。"""
         assert issubclass(ResponseTooLargeError, BlockedError)
         assert issubclass(UnsafeRedirectError, BlockedError)
+
+
+class TestPccDetailClientIsBounded:
+    """default_client() 的回應讀取上限 —— get_tender_detail 是對外 MCP 工具。"""
+
+    async def test_normal_page_text_is_unchanged(self, monkeypatch):
+        html = "<html><body>開標時間</body></html>"
+        _patch_transport(
+            monkeypatch,
+            lambda req: httpx.Response(
+                200,
+                content=html.encode(),
+                headers={"Content-Type": "text/html; charset=utf-8"},
+            ),
+        )
+        client = default_client()
+        resp = await client.get("https://web.pcc.gov.tw/tps/x")
+        assert resp.status_code == 200
+        assert resp.text == html
+
+    async def test_post_carries_form_data_and_is_bounded(self, monkeypatch):
+        seen: dict[str, bytes] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST":
+                seen["body"] = request.content
+            return httpx.Response(200, content=b"<html>ok</html>")
+
+        _patch_transport(monkeypatch, handler)
+        client = default_client()
+        resp = await client.post(
+            "https://web.pcc.gov.tw/tps/search", {"tenderId": "ABC-1"}
+        )
+        assert resp.status_code == 200
+        assert b"tenderId=ABC-1" in seen["body"]
+
+    async def test_oversized_page_is_aborted(self, monkeypatch):
+        read = 0
+
+        async def oversized():
+            nonlocal read
+            for _ in range(200):
+                read += 1
+                yield b"x" * 65536
+
+        _patch_transport(
+            monkeypatch, lambda req: httpx.Response(200, content=oversized())
+        )
+        client = default_client()
+        client.MAX_RESPONSE_BYTES = 131072
+        with pytest.raises(ResponseTooLargeError):
+            await client.get("https://web.pcc.gov.tw/tps/x")
+        assert read < 200  # 中止,不是整份讀完
+
+    async def test_session_bootstrap_runs_once(self, monkeypatch):
+        paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            paths.append(request.url.path)
+            return httpx.Response(200, content=b"<html>ok</html>")
+
+        _patch_transport(monkeypatch, handler)
+        client = default_client()
+        await client.get("https://web.pcc.gov.tw/tps/a")
+        await client.get("https://web.pcc.gov.tw/tps/b")
+        # indexTenderBasic(建 JSESSIONID)只打一次,行為與修正前相同
+        assert paths.count("/prkms/tender/common/basic/indexTenderBasic") == 1
+        assert paths[-2:] == ["/tps/a", "/tps/b"]
+
+    async def test_redirect_is_still_followed(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/tps/moved":
+                return httpx.Response(
+                    302, headers={"Location": "https://web.pcc.gov.tw/tps/final"}
+                )
+            return httpx.Response(200, content=b"<html>final</html>")
+
+        _patch_transport(monkeypatch, handler)
+        client = default_client()
+        resp = await client.get("https://web.pcc.gov.tw/tps/moved")
+        assert resp.status_code == 200
+        assert "final" in resp.text
+
+    async def test_redirect_loop_is_bounded(self, monkeypatch):
+        _patch_transport(
+            monkeypatch,
+            lambda req: httpx.Response(
+                302, headers={"Location": "https://web.pcc.gov.tw/tps/loop"}
+            ),
+        )
+        client = default_client()
+        with pytest.raises(httpx.TooManyRedirects):
+            await client.get("https://web.pcc.gov.tw/tps/loop")
