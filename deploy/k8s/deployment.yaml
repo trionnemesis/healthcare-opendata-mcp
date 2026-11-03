@@ -45,6 +45,13 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            # 本容器執行期不寫 root filesystem:DB 在 /data(唯讀掛載),
+            # 唯一的 rootfs 寫入是 FastMCP 的 banner 版本快取($HOME/.local),
+            # 而 FASTMCP_SHOW_SERVER_BANNER=false 已把它關掉(且該寫入失敗本就
+            # 被 fastmcp 吞掉)。鎖成唯讀後,取得 RCE 也無法在容器內落地檔案。
+            # 其餘三個容器(gcloud / kubectl)未一併鎖:它們會寫
+            # $HOME/.config,需實機驗證後才改,見 deploy/README.md。
+            readOnlyRootFilesystem: true
           env:
             - name: HCMCP_TRANSPORT
               value: "http"
@@ -52,12 +59,21 @@ spec:
               value: /data/hcmcp.db
             - name: HCMCP_PORT
               value: "8000"
+            # 關閉 FastMCP 啟動 banner。banner 會順便向 pypi.org 查最新版本
+            # (fastmcp/utilities/cli.py → check_for_newer_version),等於每個
+            # pod 啟動都對第三方主機發一次 egress;正式部署不需要這個檢查。
+            - name: FASTMCP_SHOW_SERVER_BANNER
+              value: "false"
           ports:
             - containerPort: 8000
           volumeMounts:
             - name: db
               mountPath: /data
               readOnly: true
+            # readOnlyRootFilesystem 下仍需要一個可寫的暫存目錄
+            # (Python tempfile / httpx 的預設落點)。
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -80,3 +96,6 @@ spec:
         - name: db
           emptyDir:
             sizeLimit: 1Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

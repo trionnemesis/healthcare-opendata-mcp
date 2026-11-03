@@ -101,11 +101,22 @@ def default_client() -> HttpClient:
 
     當前 PCC 搜尋需 session — 首次請求前先 GET indexTenderBasic 取得 JSESSIONID,
     否則 POST readTenderBasic 只回填表單頁、不執行搜尋(2026 實測)。
+
+    回應一律經 _http.read_capped 串流讀取並受 MAX_RESPONSE_BYTES 約束:
+    `r.text` 會把整份 body 讀進記憶體再解碼,而 _pcc_detail.MAX_HTML_CHARS
+    的檢查發生在「解析階段」,救不了下載與解碼(CWE-400)。搜尋結果頁更是
+    連那層 char 上限都沒有。get_tender_detail 是對外 MCP 工具,呼叫者可任意
+    觸發這條路徑。
     """
     import httpx
 
+    from health_opendata_mcp.adapters._http import read_capped
+
     class _HttpxClient:
         _UA = "Mozilla/5.0 (Macintosh) hcmcp-enrich/0.1 (+gov open data)"
+        # 真實明細頁約 140KB;上限遠高於任何正常頁面,只擋失控大小。
+        MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+        MAX_REDIRECTS = 5
 
         def __init__(self) -> None:
             self._c = httpx.AsyncClient(
@@ -113,19 +124,59 @@ def default_client() -> HttpClient:
             )
             self._session_ready = False
 
+        async def _send(self, request: httpx.Request) -> HttpResp:
+            """送出請求並以位元組上限讀回。
+
+            httpx 自動跟隨轉址時會把中間回應整份緩衝(繞過上限),故改為手動
+            跟隨它自己準備好的 next_request,中間回應一律不讀就關閉 ——
+            轉址目的地、方法與 cookie 行為因此與原本完全一致。
+            """
+            resp = await self._c.send(request, stream=True, follow_redirects=False)
+            hops = 0
+            while resp.next_request is not None:
+                nxt = resp.next_request
+                await resp.aclose()
+                hops += 1
+                if hops > self.MAX_REDIRECTS:
+                    raise httpx.TooManyRedirects(
+                        "Exceeded maximum allowed redirects.", request=request
+                    )
+                resp = await self._c.send(nxt, stream=True, follow_redirects=False)
+            try:
+                body = await read_capped(
+                    resp, str(resp.request.url), self.MAX_RESPONSE_BYTES
+                )
+            finally:
+                await resp.aclose()
+            # 以 httpx.Response 重建,讓 charset 偵測/解碼行為與 r.text 相同。
+            # aiter_bytes 給的是已解碼位元組,故移除 transfer 相關標頭。
+            headers = [
+                (k, v)
+                for k, v in resp.headers.multi_items()
+                if k.lower() not in ("content-encoding", "content-length")
+            ]
+            rebuilt = httpx.Response(
+                status_code=resp.status_code,
+                headers=headers,
+                content=body,
+                request=resp.request,
+            )
+            return HttpResp(rebuilt.status_code, rebuilt.text)
+
         async def _ensure(self) -> None:
             if not self._session_ready:
-                await self._c.get(_INDEX_URL)  # 建 JSESSIONID
+                # 建 JSESSIONID;回應內容不使用,但同樣受上限約束
+                await self._send(self._c.build_request("GET", _INDEX_URL))
                 self._session_ready = True
 
         async def get(self, url: str) -> HttpResp:
             await self._ensure()
-            r = await self._c.get(url)
-            return HttpResp(r.status_code, r.text)
+            return await self._send(self._c.build_request("GET", url))
 
         async def post(self, url: str, data: dict[str, str]) -> HttpResp:
             await self._ensure()
-            r = await self._c.post(url, data=data)
-            return HttpResp(r.status_code, r.text)
+            return await self._send(
+                self._c.build_request("POST", url, data=data)
+            )
 
     return _HttpxClient()
