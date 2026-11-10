@@ -288,3 +288,47 @@ class TestDatasetFreshness:
         repo = SqliteRepository(str(tmp_path / "empty.db"))
         await repo.init()
         assert await QueryService(repo).list_datasets() == []
+
+
+class TestQueryRowsInputLimits:
+    """query_rows 的 SQL 片段長度上限(CWE-20 / CWE-400)。
+
+    QueryService 的 class docstring 已宣告「MCP 工具參數的長度上限」政策,
+    但先前只套用在 keyword / dataset_id / natural_key / job_number 上;
+    query_rows 的 where / columns / group_by / order_by 完全沒有上限,
+    單次呼叫即可送進 MB 級字串。executor 的 SQLITE_LIMIT_SQL_LENGTH 是
+    最後一道,這裡在進 SQL 組裝之前就給出明確錯誤。
+    """
+
+    async def test_oversized_where_rejected(self, service):
+        with pytest.raises(ValueError, match="where too long"):
+            await service.query_rows("pcc-tender-mohw", where="x" * 5_000)
+
+    async def test_oversized_order_by_rejected(self, service):
+        with pytest.raises(ValueError, match="order_by too long"):
+            await service.query_rows("pcc-tender-mohw", order_by="x" * 5_000)
+
+    async def test_oversized_column_rejected(self, service):
+        with pytest.raises(ValueError, match="columns too long"):
+            await service.query_rows("pcc-tender-mohw", columns=["x" * 5_000])
+
+    async def test_oversized_group_by_rejected(self, service):
+        with pytest.raises(ValueError, match="group_by too long"):
+            await service.query_rows("pcc-tender-mohw", group_by=["x" * 5_000])
+
+    async def test_oversized_dataset_id_rejected(self, service):
+        with pytest.raises(ValueError, match="dataset_id too long"):
+            await service.query_rows("x" * 5_000)
+
+    async def test_realistic_fragments_still_accepted(self, service):
+        """真實查詢遠低於上限 —— 上限不得擋掉正常用法。"""
+        result = await service.query_rows(
+            "pcc-tender-mohw",
+            columns=["agency", "SUM(CAST(award_price AS INTEGER)) AS total"],
+            where="agency LIKE '%衛生福利部%' AND award_price IS NOT NULL",
+            group_by=["agency"],
+            order_by="total DESC",
+            limit=10,
+        )
+        assert result["columns"] == ["agency", "total"]
+        assert result["rows"]

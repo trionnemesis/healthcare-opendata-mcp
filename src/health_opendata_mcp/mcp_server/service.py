@@ -39,12 +39,34 @@ class QueryService:
     # CWE-400)。上限遠大於任何真實案號/關鍵字,不影響正常查詢。
     _MAX_KEYWORD_LEN = 200
     _MAX_IDENT_LEN = 200
+    # query_rows 的 SQL 片段上限。片段本來就是 SQL(不是識別符),合法的
+    # 聚合/篩選可以比案號長得多,故另設較寬的上限;但先前完全沒有上限,
+    # 與本 class 其他參數的政策不一致 —— executor 的
+    # SQLITE_LIMIT_SQL_LENGTH 是最後一道,這裡先給出明確的錯誤。
+    _MAX_FRAGMENT_LEN = 4_000
 
     @classmethod
     def _check_len(cls, value: str, *, name: str, max_len: int) -> str:
         if len(value) > max_len:
             raise ValueError(f"{name} too long ({len(value)} chars, max {max_len})")
         return value
+
+    @classmethod
+    def _check_fragments(
+        cls,
+        *,
+        columns: list[str] | None,
+        where: str | None,
+        group_by: list[str] | None,
+        order_by: str | None,
+    ) -> None:
+        """對 query_rows 的 SQL 片段套用長度上限(CWE-20 / CWE-400)。"""
+        for name, value in (("where", where), ("order_by", order_by)):
+            if value is not None:
+                cls._check_len(value, name=name, max_len=cls._MAX_FRAGMENT_LEN)
+        for name, values in (("columns", columns), ("group_by", group_by)):
+            for item in values or ():
+                cls._check_len(item, name=name, max_len=cls._MAX_FRAGMENT_LEN)
 
     def __init__(
         self, repo: SqliteRepository, enricher: PccDetailEnricher | None = None
@@ -124,6 +146,10 @@ class QueryService:
         order_by: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> dict[str, Any]:
+        self._check_len(dataset_id, name="dataset_id", max_len=self._MAX_IDENT_LEN)
+        self._check_fragments(
+            columns=columns, where=where, group_by=group_by, order_by=order_by
+        )
         try:
             result = await self._repo.query_rows(
                 dataset_id,
