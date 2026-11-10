@@ -124,3 +124,49 @@ def test_verify_catalog_shell_preserves_argv(
         expected.append("--enabled-only")
     assert json.loads(result.stdout) == expected
     assert not (tmp_path / "INJECTION_CANARY").exists()
+
+
+class TestActionPinning:
+    """第三方 Action 必須釘在 commit SHA(CWE-1357 / 供應鏈)。
+
+    `actions/checkout@v5` 這類可變 tag 由上游帳號隨時重指。pages.yml 握有
+    `pages: write` 與 `id-token: write` —— 被重指的 tag 可在該 job 內竄改
+    即將部署的 _site、或取得此 repo 的 OIDC token。兩個姊妹專案已全面釘
+    SHA,本專案先前是唯一仍用可變 tag 者。
+    """
+
+    _SHA_PINNED = re.compile(
+        r"^uses:\s+[\w.-]+/[\w.-]+(?:/[\w.-]+)*@[0-9a-f]{40}\s*(#.*)?$"
+    )
+
+    @staticmethod
+    def _uses_lines() -> list[tuple[str, int, str]]:
+        found = []
+        for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+            for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                stripped = line.strip().lstrip("- ").strip()
+                if stripped.startswith("uses:"):
+                    found.append((path.name, lineno, stripped))
+        return found
+
+    def test_workflows_declare_actions(self):
+        assert self._uses_lines(), "找不到任何 uses: —— 測試的前提已失效"
+
+    def test_every_action_is_pinned_to_a_commit_sha(self):
+        unpinned = [
+            f"{name}:{lineno}: {text}"
+            for name, lineno, text in self._uses_lines()
+            if not self._SHA_PINNED.match(text)
+        ]
+        assert not unpinned, "Action 未釘 commit SHA:\n" + "\n".join(unpinned)
+
+    def test_each_pin_carries_a_version_comment(self):
+        """SHA 不可讀;要求併附 `# vX.Y.Z` 註解,升級時才看得出動了什麼。"""
+        missing = [
+            f"{name}:{lineno}: {text}"
+            for name, lineno, text in self._uses_lines()
+            if "#" not in text
+        ]
+        assert not missing, "釘住的 Action 缺版本註解:\n" + "\n".join(missing)
