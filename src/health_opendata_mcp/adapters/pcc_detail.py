@@ -13,6 +13,7 @@ from typing import Protocol, runtime_checkable
 from urllib.parse import quote, urljoin, urlparse
 
 from health_opendata_mcp.adapters import _pcc_detail as detail
+from health_opendata_mcp.adapters._http import MAX_RESPONSE_BYTES, read_capped
 from health_opendata_mcp.contracts import BlockedError
 
 _BASE = "https://web.pcc.gov.tw"
@@ -101,6 +102,10 @@ def default_client() -> HttpClient:
 
     當前 PCC 搜尋需 session — 首次請求前先 GET indexTenderBasic 取得 JSESSIONID,
     否則 POST readTenderBasic 只回填表單頁、不執行搜尋(2026 實測)。
+
+    回應以串流 + 位元組上限讀取(CWE-400):`r.text` 會把整份 body 讀進
+    記憶體後才回傳,而 get_tender_detail 是對外 MCP 工具 —— server pod 的
+    memory limit 為 512Mi,一個失控的上游回應即可觸發 OOMKill。
     """
     import httpx
 
@@ -108,24 +113,51 @@ def default_client() -> HttpClient:
         _UA = "Mozilla/5.0 (Macintosh) hcmcp-enrich/0.1 (+gov open data)"
 
         def __init__(self) -> None:
+            # follow_redirects=False:httpx 自動轉址會先整份緩衝中間回應,
+            # 繞過下方上限。_send 自行跟隨 next_request 並關閉中間 body。
             self._c = httpx.AsyncClient(
-                timeout=60, follow_redirects=True, headers={"User-Agent": self._UA}
+                timeout=60, follow_redirects=False, headers={"User-Agent": self._UA}
             )
             self._session_ready = False
 
+        async def _send(self, request: httpx.Request) -> HttpResp:
+            redirects_used = 0
+            while True:
+                response = await self._c.send(request, stream=True)
+                if response.next_request is None:
+                    break
+                next_request = response.next_request
+                await response.aclose()
+                redirects_used += 1
+                if redirects_used > self._c.max_redirects:
+                    raise httpx.TooManyRedirects(
+                        "Exceeded maximum allowed redirects.", request=request
+                    )
+                request = next_request
+            try:
+                raw = await read_capped(
+                    response, str(request.url), MAX_RESPONSE_BYTES
+                )
+            finally:
+                await response.aclose()
+            return HttpResp(
+                response.status_code, raw.decode("utf-8", "replace")
+            )
+
         async def _ensure(self) -> None:
             if not self._session_ready:
-                await self._c.get(_INDEX_URL)  # 建 JSESSIONID
+                # 建 JSESSIONID;上限同樣適用
+                await self._send(self._c.build_request("GET", _INDEX_URL))
                 self._session_ready = True
 
         async def get(self, url: str) -> HttpResp:
             await self._ensure()
-            r = await self._c.get(url)
-            return HttpResp(r.status_code, r.text)
+            return await self._send(self._c.build_request("GET", url))
 
         async def post(self, url: str, data: dict[str, str]) -> HttpResp:
             await self._ensure()
-            r = await self._c.post(url, data=data)
-            return HttpResp(r.status_code, r.text)
+            return await self._send(
+                self._c.build_request("POST", url, data=data)
+            )
 
     return _HttpxClient()
