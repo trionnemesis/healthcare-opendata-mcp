@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
@@ -139,6 +140,13 @@ class QueryService:
             ) from exc
         except (QueryValidationError, QueryDeniedError) as exc:
             raise ValueError(str(exc)) from exc
+        except sqlite3.DatabaseError as exc:
+            # 語法/欄位錯誤(如 "no such column: x")先前會以原始
+            # sqlite3.OperationalError 逸出,違反本模組開頭宣告的錯誤映射策略
+            # (CWE-209:未映射的內部例外型別直接到對外介面)。統一轉 ValueError;
+            # 保留 SQLite 訊息本身 —— 它不含組裝後的 SQL,且 schema 已由
+            # list_datasets / get_dataset 公開,對呼叫端修正查詢是必要資訊。
+            raise ValueError(f"查詢無法執行: {exc}") from exc
         return _result_dict(result)
 
     async def search_records(
@@ -179,6 +187,13 @@ class QueryService:
             raise ValueError(f"dataset 不存在: {dataset_id}") from exc
         except (QueryValidationError, QueryDeniedError) as exc:
             raise ValueError(str(exc)) from exc
+        except sqlite3.DatabaseError as exc:
+            # 非標案資料集(缺 companies / award_price 欄位)會走到這裡。
+            # 同上:不讓原始 sqlite3 例外型別逸出對外介面。
+            raise ValueError(
+                f"dataset {dataset_id} 不支援廠商統計"
+                f"(需 companies / award_price 欄位): {exc}"
+            ) from exc
 
         col = {name: i for i, name in enumerate(result.columns)}
         counts: dict[str, int] = defaultdict(int)

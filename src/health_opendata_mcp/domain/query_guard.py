@@ -33,8 +33,32 @@ _FORBIDDEN = re.compile(
     re.IGNORECASE,
 )
 
+# 單一 SQL 片段長度上限(CWE-400)。QueryService 已對 keyword / dataset_id /
+# natural_key / job_number 設 200 字元上限,但 query_rows 的 SQL 片段當時未納入
+# —— 這些片段同樣是 MCP 工具的自由文字參數,且會進到 regex 掃描與 SQLite
+# parser。無上限時單次呼叫即可送進 MB 級字串(實測 3MB where 可直接通過)。
+# 2000 字元遠大於任何真實分析查詢(repo 內最長的 where 不到 100 字元),
+# 不影響正常用法;超量者在 SQL 組裝前就被擋下。
+MAX_FRAGMENT_LEN = 2000
+
+# columns / group_by 是清單參數:逐項長度上限擋不住「很多項」。
+# 64 項遠多於任何物化表的欄位數,仍讓總組裝長度有界。
+MAX_FRAGMENT_COUNT = 64
+
+
+def _validate_count(fragments: list[str], *, what: str) -> list[str]:
+    if len(fragments) > MAX_FRAGMENT_COUNT:
+        raise QueryValidationError(
+            f"{what} 項數過多({len(fragments)},上限 {MAX_FRAGMENT_COUNT})"
+        )
+    return fragments
+
 
 def _validate(fragment: str, *, what: str) -> str:
+    if len(fragment) > MAX_FRAGMENT_LEN:
+        raise QueryValidationError(
+            f"{what} 過長({len(fragment)} 字元,上限 {MAX_FRAGMENT_LEN})"
+        )
     m = _FORBIDDEN.search(fragment)
     if m:
         raise QueryValidationError(f"{what} 含禁用語法: {m.group(0)!r}")
@@ -55,13 +79,23 @@ def build_select(
     table 必須由呼叫端以 dataset_id 白名單映射取得 — 本函式不接使用者原始輸入。
     SQL 的 LIMIT 為 effective_limit + 1,供 executor 偵測截斷。
     """
-    cols = ", ".join(_validate(c, what="columns") for c in columns) if columns else "*"
+    cols = (
+        ", ".join(
+            _validate(c, what="columns")
+            for c in _validate_count(columns, what="columns")
+        )
+        if columns
+        else "*"
+    )
     # table 來自 dataset_id 白名單、cols 已過 _validate,非使用者原始輸入
     parts = [f'SELECT {cols} FROM "{table}"']  # nosec B608
     if where:
         parts.append(f"WHERE {_validate(where, what='where')}")
     if group_by:
-        joined = ", ".join(_validate(g, what="group_by") for g in group_by)
+        joined = ", ".join(
+            _validate(g, what="group_by")
+            for g in _validate_count(group_by, what="group_by")
+        )
         parts.append(f"GROUP BY {joined}")
     if order_by:
         parts.append(f"ORDER BY {_validate(order_by, what='order_by')}")
