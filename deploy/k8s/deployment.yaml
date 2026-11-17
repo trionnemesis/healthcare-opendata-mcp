@@ -29,7 +29,10 @@ spec:
         - name: fetch-db
           image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
           command: ["gcloud", "storage", "cp", "gs://HCMCP_BUCKET/hcmcp.db", "/data/hcmcp.db"]
-          # 容器層最小權限:本容器只做 GCS 下載,不需提權或任何 capability
+          # 容器層最小權限:本容器只做 GCS 下載,不需提權或任何 capability。
+          # 刻意不設 readOnlyRootFilesystem:gcloud 需可寫的 CLOUDSDK_CONFIG
+          # 目錄(預設在 $HOME 下)。要一併收斂的話得另外掛 config volume 並
+          # 設 CLOUDSDK_CONFIG,本次未在可連 GCS 的環境驗證過,故不動。
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -45,6 +48,12 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            # 根檔案系統唯讀:本容器只讀 /data 的 DB,不需寫入 image 層。
+            # 唯一例外是 SQLite 的 sorter —— query_rows 允許任意欄位的
+            # ORDER BY / GROUP BY,無索引可用時 SQLite 會把排序溢寫到
+            # 暫存檔(預設路徑 /tmp),故一併掛上可寫的 /tmp emptyDir。
+            # 少了那個 volume,大型排序查詢會失敗,不是單純的強化而已。
+            readOnlyRootFilesystem: true
           env:
             - name: HCMCP_TRANSPORT
               value: "http"
@@ -58,6 +67,8 @@ spec:
             - name: db
               mountPath: /data
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -80,3 +91,7 @@ spec:
         - name: db
           emptyDir:
             sizeLimit: 1Gi
+        # readOnlyRootFilesystem 下 SQLite sorter 的溢寫目標(見容器 securityContext)
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
