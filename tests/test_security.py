@@ -193,3 +193,171 @@ class TestDataDirPermissions:
         from health_opendata_mcp.mcp_server import __main__ as server_main
 
         assert server_main.ensure_db_dir is ensure_db_dir
+
+
+# ── 5. 回應 body 大小上限(CWE-400)───────────────────────────────────────────
+
+
+def _mock_client(handler, *, follow_redirects: bool = False):
+    import httpx
+
+    return httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), follow_redirects=follow_redirects
+    )
+
+
+class TestResponseSizeLimit:
+    """`resp.content` / `resp.text` 會把整份 body 讀進記憶體才交給下游解析。
+
+    上游站台(健保署、web.pcc.gov.tw)不在本專案控制範圍內;被指向大型檔案
+    或上游異常回傳巨量 body 時,單次呼叫即可耗盡記憶體。`get_tender_detail`
+    是 MCP 工具,此路徑由用戶端可達,不只是離線 ETL。
+    """
+
+    async def test_declared_oversize_is_rejected_before_download(self) -> None:
+        import httpx
+
+        from health_opendata_mcp.adapters._http import (
+            ResponseTooLargeError,
+            bounded_send,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, headers={"Content-Length": "999"}, content=b"x" * 999
+            )
+
+        async with _mock_client(handler) as client:
+            with pytest.raises(ResponseTooLargeError, match="declared"):
+                await bounded_send(
+                    client, client.build_request("GET", "https://x.test/f"),
+                    max_bytes=100,
+                )
+
+    async def test_streamed_oversize_is_rejected(self) -> None:
+        """未宣告 Content-Length 時,累計超量仍須中止。"""
+        import httpx
+
+        from health_opendata_mcp.adapters._http import (
+            ResponseTooLargeError,
+            bounded_send,
+        )
+
+        async def body():
+            for _ in range(20):
+                yield b"y" * 64
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=body())
+
+        async with _mock_client(handler) as client:
+            with pytest.raises(ResponseTooLargeError):
+                await bounded_send(
+                    client, client.build_request("GET", "https://x.test/f"),
+                    max_bytes=100,
+                )
+
+    async def test_under_cap_response_api_is_unchanged(self) -> None:
+        """上限之內的回應行為不得改變(避免修正造成功能退化)。"""
+        import httpx
+
+        from health_opendata_mcp.adapters._http import bounded_send
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                201,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                json={"ok": True, "名稱": "衛福部"},
+            )
+
+        async with _mock_client(handler) as client:
+            resp = await bounded_send(
+                client, client.build_request("GET", "https://x.test/f"),
+                max_bytes=1_000_000,
+            )
+        assert resp.status_code == 201
+        assert resp.json() == {"ok": True, "名稱": "衛福部"}
+        assert "衛福部" in resp.text
+        assert resp.headers["Content-Type"].startswith("application/json")
+
+    async def test_redirect_bodies_are_not_buffered_past_the_cap(self) -> None:
+        """轉址中間回應的 body 不得被讀進記憶體,否則上限等於沒設。"""
+        import httpx
+
+        from health_opendata_mcp.adapters._http import bounded_send
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/a":
+                return httpx.Response(
+                    302, headers={"Location": "https://x.test/b"},
+                    content=b"z" * 5_000,
+                )
+            return httpx.Response(200, content=b"done")
+
+        async with _mock_client(handler, follow_redirects=True) as client:
+            resp = await bounded_send(
+                client, client.build_request("GET", "https://x.test/a"),
+                max_bytes=1_000,
+            )
+        assert resp.content == b"done"
+
+    async def test_default_http_get_is_capped(self, monkeypatch) -> None:
+        import httpx
+
+        from health_opendata_mcp.adapters import _http
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"q" * 4_096)
+
+        real = httpx.AsyncClient
+
+        def factory(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_http.httpx, "AsyncClient", factory)
+        assert len(await _http.default_http_get("https://x.test/f")) == 4_096
+        with pytest.raises(_http.ResponseTooLargeError):
+            await _http.default_http_get("https://x.test/f", max_bytes=1_024)
+
+    def test_too_large_is_a_blocked_error(self) -> None:
+        """呼叫端既有的 BlockedError 分支必須接得住,否則變成未處理例外。"""
+        from health_opendata_mcp.adapters._http import ResponseTooLargeError
+        from health_opendata_mcp.contracts import BlockedError
+
+        assert issubclass(ResponseTooLargeError, BlockedError)
+
+    def test_caps_are_set_and_bounded(self) -> None:
+        from health_opendata_mcp.adapters import _http
+
+        assert 0 < _http.MAX_PAGE_BYTES <= 8 * 1024 * 1024
+        assert 0 < _http.MAX_BULK_BYTES <= 100 * 1024 * 1024
+
+
+class TestAllHttpPathsAreBounded:
+    """避免日後改回 `self._c.get(...)`,讓某條路徑重新變成無上限。"""
+
+    @pytest.mark.parametrize(
+        "filename", ["_http.py", "pcc_detail.py"]
+    )
+    def test_no_unbounded_client_read(self, filename: str) -> None:
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "src/health_opendata_mcp/adapters"
+            / filename
+        ).read_text(encoding="utf-8")
+        for banned in ("self._c.get(", "self._c.post(", "await client.get("):
+            assert banned not in src, (
+                f"{filename} 直接呼叫 {banned} —— 繞過 bounded_send 的大小上限"
+            )
+
+    def test_pcc_detail_client_uses_bounded_send(self) -> None:
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "src/health_opendata_mcp/adapters/pcc_detail.py"
+        ).read_text(encoding="utf-8")
+        assert "bounded_send" in src

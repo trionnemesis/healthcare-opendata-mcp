@@ -104,6 +104,8 @@ def default_client() -> HttpClient:
     """
     import httpx
 
+    from health_opendata_mcp.adapters._http import MAX_PAGE_BYTES, bounded_send
+
     class _HttpxClient:
         _UA = "Mozilla/5.0 (Macintosh) hcmcp-enrich/0.1 (+gov open data)"
 
@@ -113,19 +115,26 @@ def default_client() -> HttpClient:
             )
             self._session_ready = False
 
+        async def _send(self, request: httpx.Request) -> httpx.Response:
+            # 上游頁面大小不在本專案控制範圍內;r.text 會先把整份 body 讀進
+            # 記憶體(CWE-400)。此 client 服務 MCP 工具 get_tender_detail,
+            # 屬用戶端可達路徑,故一律走 8 MiB 上限的串流讀取。
+            return await bounded_send(self._c, request, max_bytes=MAX_PAGE_BYTES)
+
         async def _ensure(self) -> None:
             if not self._session_ready:
-                await self._c.get(_INDEX_URL)  # 建 JSESSIONID
+                # 建 JSESSIONID
+                await self._send(self._c.build_request("GET", _INDEX_URL))
                 self._session_ready = True
 
         async def get(self, url: str) -> HttpResp:
             await self._ensure()
-            r = await self._c.get(url)
+            r = await self._send(self._c.build_request("GET", url))
             return HttpResp(r.status_code, r.text)
 
         async def post(self, url: str, data: dict[str, str]) -> HttpResp:
             await self._ensure()
-            r = await self._c.post(url, data=data)
+            r = await self._send(self._c.build_request("POST", url, data=data))
             return HttpResp(r.status_code, r.text)
 
     return _HttpxClient()
