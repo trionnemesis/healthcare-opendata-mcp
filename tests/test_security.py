@@ -193,3 +193,430 @@ class TestDataDirPermissions:
         from health_opendata_mcp.mcp_server import __main__ as server_main
 
         assert server_main.ensure_db_dir is ensure_db_dir
+
+
+# ── 5. 回應 body 大小上限(CWE-400)───────────────────────────────────────────
+
+
+def _mock_client(handler, *, follow_redirects: bool = False):
+    import httpx
+
+    return httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), follow_redirects=follow_redirects
+    )
+
+
+class TestResponseSizeLimit:
+    """`resp.content` / `resp.text` 會把整份 body 讀進記憶體才交給下游解析。
+
+    上游站台(健保署、web.pcc.gov.tw)不在本專案控制範圍內;被指向大型檔案
+    或上游異常回傳巨量 body 時,單次呼叫即可耗盡記憶體。`get_tender_detail`
+    是 MCP 工具,此路徑由用戶端可達,不只是離線 ETL。
+    """
+
+    async def test_declared_oversize_is_rejected_before_download(self) -> None:
+        import httpx
+
+        from health_opendata_mcp.adapters._http import (
+            ResponseTooLargeError,
+            bounded_send,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, headers={"Content-Length": "999"}, content=b"x" * 999
+            )
+
+        async with _mock_client(handler) as client:
+            with pytest.raises(ResponseTooLargeError, match="declared"):
+                await bounded_send(
+                    client, client.build_request("GET", "https://x.test/f"),
+                    max_bytes=100,
+                )
+
+    async def test_streamed_oversize_is_rejected(self) -> None:
+        """未宣告 Content-Length 時,累計超量仍須中止。"""
+        import httpx
+
+        from health_opendata_mcp.adapters._http import (
+            ResponseTooLargeError,
+            bounded_send,
+        )
+
+        async def body():
+            for _ in range(20):
+                yield b"y" * 64
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=body())
+
+        async with _mock_client(handler) as client:
+            with pytest.raises(ResponseTooLargeError):
+                await bounded_send(
+                    client, client.build_request("GET", "https://x.test/f"),
+                    max_bytes=100,
+                )
+
+    async def test_under_cap_response_api_is_unchanged(self) -> None:
+        """上限之內的回應行為不得改變(避免修正造成功能退化)。"""
+        import httpx
+
+        from health_opendata_mcp.adapters._http import bounded_send
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                201,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                json={"ok": True, "名稱": "衛福部"},
+            )
+
+        async with _mock_client(handler) as client:
+            resp = await bounded_send(
+                client, client.build_request("GET", "https://x.test/f"),
+                max_bytes=1_000_000,
+            )
+        assert resp.status_code == 201
+        assert resp.json() == {"ok": True, "名稱": "衛福部"}
+        assert "衛福部" in resp.text
+        assert resp.headers["Content-Type"].startswith("application/json")
+
+    async def test_redirect_bodies_are_not_buffered_past_the_cap(self) -> None:
+        """轉址中間回應的 body 不得被讀進記憶體,否則上限等於沒設。"""
+        import httpx
+
+        from health_opendata_mcp.adapters._http import bounded_send
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/a":
+                return httpx.Response(
+                    302, headers={"Location": "https://x.test/b"},
+                    content=b"z" * 5_000,
+                )
+            return httpx.Response(200, content=b"done")
+
+        async with _mock_client(handler, follow_redirects=True) as client:
+            resp = await bounded_send(
+                client, client.build_request("GET", "https://x.test/a"),
+                max_bytes=1_000,
+            )
+        assert resp.content == b"done"
+
+    async def test_default_http_get_is_capped(self, monkeypatch) -> None:
+        import httpx
+
+        from health_opendata_mcp.adapters import _http
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"q" * 4_096)
+
+        real = httpx.AsyncClient
+
+        def factory(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_http.httpx, "AsyncClient", factory)
+        assert len(await _http.default_http_get("https://x.test/f")) == 4_096
+        with pytest.raises(_http.ResponseTooLargeError):
+            await _http.default_http_get("https://x.test/f", max_bytes=1_024)
+
+    def test_too_large_is_a_blocked_error(self) -> None:
+        """呼叫端既有的 BlockedError 分支必須接得住,否則變成未處理例外。"""
+        from health_opendata_mcp.adapters._http import ResponseTooLargeError
+        from health_opendata_mcp.contracts import BlockedError
+
+        assert issubclass(ResponseTooLargeError, BlockedError)
+
+    def test_caps_are_set_and_bounded(self) -> None:
+        from health_opendata_mcp.adapters import _http
+
+        assert 0 < _http.MAX_PAGE_BYTES <= 8 * 1024 * 1024
+        assert 0 < _http.MAX_BULK_BYTES <= 100 * 1024 * 1024
+
+
+class TestAllHttpPathsAreBounded:
+    """避免日後改回 `self._c.get(...)`,讓某條路徑重新變成無上限。"""
+
+    @pytest.mark.parametrize(
+        "filename", ["_http.py", "pcc_detail.py"]
+    )
+    def test_no_unbounded_client_read(self, filename: str) -> None:
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "src/health_opendata_mcp/adapters"
+            / filename
+        ).read_text(encoding="utf-8")
+        for banned in ("self._c.get(", "self._c.post(", "await client.get("):
+            assert banned not in src, (
+                f"{filename} 直接呼叫 {banned} —— 繞過 bounded_send 的大小上限"
+            )
+
+    def test_pcc_detail_client_uses_bounded_send(self) -> None:
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "src/health_opendata_mcp/adapters/pcc_detail.py"
+        ).read_text(encoding="utf-8")
+        assert "bounded_send" in src
+
+
+# ── 6. query_rows 的例外映射與片段上限(CWE-755 / CWE-209 / CWE-20)──────────
+
+
+class TestQueryRowsErrorMapping:
+    """`conn.execute()` 失敗時 sqlite3 拋 OperationalError —— 它原本不在
+    QueryService 的例外映射清單內,會原樣穿透 MCP 工具邊界,與 service
+    文件宣告的「領域/執行層例外統一轉 ValueError」相矛盾(CWE-755),
+    並把引擎內部錯誤字串交給呼叫端(CWE-209)。
+    """
+
+    @pytest.fixture
+    async def service(self, tmp_path) -> QueryService:
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        await repo.upsert_batch(_batch([{"_nk": "k1", "title": "甲"}]))
+        return QueryService(repo)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"where": "nosuchcol = 1"},
+            {"where": "1 ==== 1"},
+            {"where": "title LIKE '" + "a" * 1_500 + "'"},
+            {"order_by": "nosuchcol"},
+            {"columns": ["nosuchcol"]},
+            {"group_by": ["nosuchcol"]},
+        ],
+    )
+    async def test_sqlite_errors_surface_as_value_error(
+        self, service: QueryService, kwargs: dict
+    ) -> None:
+        import sqlite3
+
+        try:
+            await service.query_rows("ds-a", **kwargs)
+        except ValueError:
+            pass
+        except sqlite3.Error as exc:  # pragma: no cover - 迴歸時才會走到
+            pytest.fail(f"raw sqlite3 error escaped the tool boundary: {exc!r}")
+
+    def test_operational_detail_is_not_echoed(self, tmp_path) -> None:
+        """執行層的環境問題(DB 檔案打不開)不得把路徑或引擎狀態轉述出去。
+
+        直接測 execute_readonly:`query_rows` 會先經 `get_dataset`,那條
+        aiosqlite 連線路徑不在本次修正範圍內(見報告「尚未自動修正」)。
+        """
+        from health_opendata_mcp.repository.query_executor import (
+            QueryExecutionError,
+            execute_readonly,
+        )
+
+        missing = str(tmp_path / "nonexistent" / "gone.db")
+        with pytest.raises(QueryExecutionError) as err:
+            execute_readonly(missing, "ds_a", 'SELECT * FROM "ds_a" LIMIT 1', 1)
+        assert "unable to open" not in str(err.value)
+        assert "nonexistent" not in str(err.value)
+        assert str(tmp_path) not in str(err.value)
+
+    async def test_valid_query_still_works(self, service: QueryService) -> None:
+        """修正不得改變正常查詢的結果(避免功能退化)。"""
+        out = await service.query_rows(
+            "ds-a", columns=["title"], where="title = '甲'", order_by="title"
+        )
+        assert out == {"columns": ["title"], "rows": [["甲"]], "truncated": False}
+
+
+class TestQueryRowsFragmentLimits:
+    """where / columns / group_by / order_by 是自由文字且直接進 SQL 組裝。
+
+    其餘工具參數(keyword、dataset_id、natural_key、job_number)早有 200
+    字元上限,唯獨這幾個沒有 —— 呼叫端單次即可送進 MB 級片段或上千個
+    column(CWE-20 / CWE-400),先前只由 SQLite 引擎內部限制兜底。
+    """
+
+    @pytest.fixture
+    async def service(self, tmp_path) -> QueryService:
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        await repo.upsert_batch(_batch([{"_nk": "k1", "title": "甲"}]))
+        return QueryService(repo)
+
+    async def test_oversized_where_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="too long"):
+            await service.query_rows("ds-a", where="title = '" + "a" * 3_000 + "'")
+
+    async def test_oversized_order_by_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="too long"):
+            await service.query_rows("ds-a", order_by="a" * 3_000)
+
+    @pytest.mark.parametrize("field", ["columns", "group_by"])
+    async def test_too_many_items_rejected(
+        self, service: QueryService, field: str
+    ) -> None:
+        with pytest.raises(ValueError, match="too many items"):
+            await service.query_rows("ds-a", **{field: ["title"] * 500})
+
+    @pytest.mark.parametrize("field", ["columns", "group_by"])
+    async def test_oversized_item_rejected(
+        self, service: QueryService, field: str
+    ) -> None:
+        with pytest.raises(ValueError, match="too long"):
+            await service.query_rows("ds-a", **{field: ["a" * 3_000]})
+
+    async def test_oversized_dataset_id_rejected(
+        self, service: QueryService
+    ) -> None:
+        with pytest.raises(ValueError, match="too long"):
+            await service.query_rows("d" * 500)
+
+    async def test_realistic_query_is_not_blocked(
+        self, service: QueryService
+    ) -> None:
+        """repo 內最長的真實 where 為 65 字元、最多 2 個 column ——
+        上限必須留足餘裕,不得誤擋既有看板查詢。"""
+        from health_opendata_mcp.domain.query_guard import (
+            MAX_FRAGMENT_ITEMS,
+            MAX_FRAGMENT_LEN,
+        )
+
+        assert MAX_FRAGMENT_LEN >= 1_000
+        assert MAX_FRAGMENT_ITEMS >= 16
+        out = await service.query_rows(
+            "ds-a",
+            columns=["title", "COUNT(*) AS n"],
+            where="title IS NOT NULL AND title != ''",
+            group_by=["title"],
+            order_by="n DESC",
+        )
+        assert out["rows"] == [["甲", 1]]
+
+    async def test_get_vendor_stats_fixed_where_still_passes(self, tmp_path) -> None:
+        """內部固定 where(get_vendor_stats)不得被新上限擋下。"""
+        from health_opendata_mcp.domain.query_guard import build_select
+
+        sql, _ = build_select(
+            "ds_pcc_tender",
+            columns=["companies", "award_price"],
+            where=(
+                "announcement_type='決標公告'"
+                " AND companies IS NOT NULL AND companies != ''"
+            ),
+            limit=400,
+        )
+        assert "LIMIT 401" in sql
+
+
+# ── 7. CI / 供應鏈(CWE-1357 / CWE-78)──────────────────────────────────────
+
+
+class TestCiSupplyChain:
+    """第三方 action 一律釘 commit SHA。
+
+    浮動 tag(@v5)可被上游重新指向 —— 等同把 CI 執行權交給上游 tag 的
+    可變性,而這些 job 看得到 GITHUB_TOKEN(pages.yml 另有 pages: write
+    與 id-token: write)。姊妹專案 g0vmcp / opendataCampus-MCP 已採此作法
+    並在註解中載明理由,本專案先前仍用浮動 tag,此測試鎖住對齊結果。
+    """
+
+    _WORKFLOWS = ("ci.yml", "pages.yml", "verify-catalog.yml")
+
+    @staticmethod
+    def _text(name: str) -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1] / ".github/workflows" / name
+        ).read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("name", _WORKFLOWS)
+    def test_actions_are_pinned_to_commit_sha(self, name: str) -> None:
+        import re
+
+        uses = re.findall(r"uses:\s*(\S+)", self._text(name))
+        assert uses, f"{name} 沒有任何 uses: —— 測試可能找錯檔案"
+        for ref in uses:
+            assert "@" in ref, f"{name}: {ref} 未指定版本"
+            rev = ref.split("@", 1)[1]
+            assert re.fullmatch(r"[0-9a-f]{40}", rev), (
+                f"{name}: {ref} 使用浮動 ref,必須釘 40 碼 commit SHA"
+            )
+
+    @pytest.mark.parametrize("name", _WORKFLOWS)
+    def test_declares_least_privilege_token(self, name: str) -> None:
+        """未宣告 permissions 時 GITHUB_TOKEN 會沿用 repository 預設。"""
+        assert "permissions:" in self._text(name)
+        assert "contents: read" in self._text(name)
+
+    @pytest.mark.parametrize("name", _WORKFLOWS)
+    def test_no_inputs_interpolated_into_run_blocks(self, name: str) -> None:
+        """${{ }} 在 shell 執行前做文字替換;插進 run: 等於讓輸入變成 shell 語法。"""
+        import re
+
+        for block in re.findall(r"\n\s+run: \|[\s\S]*?(?=\n\s+- |\n\S|\Z)", self._text(name)):
+            assert "${{" not in block, (
+                f"{name}: run: 區塊直接內插 ${{{{ }}}},應改以 env: 傳入並加引號"
+            )
+
+
+
+class TestTraceparentReDoSFloor:
+    """opentelemetry-api < 1.45.2 的 traceparent 解析可被用戶端輸入拖成 ReDoS。
+
+    CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg。可達性(非推論):fastmcp 的
+    `_get_parent_trace_context()` 讀 `request_ctx.get().meta` 後交給
+    `propagate.extract()` —— 即 MCP 請求的 `_meta.traceparent`,完全由
+    用戶端提供;regex 是同步呼叫,會卡住事件迴圈。1.45.2 以 512 字元
+    上限修正。本專案無 lockfile,下限用於防止新環境裝回有漏洞版本。
+    """
+
+    _FLOOR = "1.45.2"
+
+    def test_pyproject_floor_excludes_vulnerable_opentelemetry(self) -> None:
+        import re
+        from pathlib import Path
+
+        from packaging.requirements import Requirement
+        from packaging.version import Version
+
+        text = (
+            Path(__file__).resolve().parents[1] / "pyproject.toml"
+        ).read_text(encoding="utf-8")
+        m = re.search(r'"(opentelemetry-api[^"]*)"', text)
+        assert m, "opentelemetry-api floor not declared in pyproject.toml"
+        req = Requirement(m.group(1))
+        assert not req.specifier.contains(Version("1.45.1")), (
+            "opentelemetry-api floor permits versions vulnerable to "
+            "CVE-2026-126360 (traceparent ReDoS, fixed in 1.45.2)"
+        )
+        assert req.specifier.contains(Version(self._FLOOR))
+
+    def test_installed_opentelemetry_meets_floor(self) -> None:
+        from importlib.metadata import version
+
+        from packaging.version import Version
+
+        assert Version(version("opentelemetry-api")) >= Version(self._FLOOR)
+
+    def test_oversized_traceparent_extracts_without_quadratic_blowup(self) -> None:
+        """200 KB 的惡意 traceparent 必須在 1 秒內處理完。
+
+        門檻刻意寬鬆(非精密計時):1.45.1 下同一輸入需約兩分鐘 CPU,
+        1.45.2 下為毫秒級,差距約兩個數量級。
+        """
+        import time
+
+        from opentelemetry.trace.propagation.tracecontext import (
+            TraceContextTextMapPropagator,
+        )
+
+        payload = "00-" + "0" * 32 + "-" + "0" * 16 + "-00-" + " " * 200_000 + "\nx"
+        start = time.perf_counter()
+        TraceContextTextMapPropagator().extract({"traceparent": payload})
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0, (
+            f"traceparent extraction took {elapsed:.1f}s — quadratic backtracking "
+            "(CVE-2026-126360) appears to be present"
+        )

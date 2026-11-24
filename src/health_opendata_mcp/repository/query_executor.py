@@ -23,6 +23,38 @@ class QueryDeniedError(RuntimeError):
     """查詢觸及白名單外的資源或超出資源上限,被執行層拒絕。"""
 
 
+class QueryExecutionError(RuntimeError):
+    """SQLite 拒絕執行該查詢(語法/語意錯誤,或引擎內部限制)。
+
+    為何需要這個型別:`conn.execute()` 失敗時 sqlite3 會拋
+    `OperationalError`。它不在 QueryService 的例外映射清單內,會原樣穿透
+    MCP 工具邊界 —— 與 service 文件宣告的「領域/執行層例外統一轉
+    ValueError,訊息對使用者安全」相矛盾(CWE-755),且把引擎內部錯誤
+    字串直接交給呼叫端(CWE-209)。
+    """
+
+
+# 使用者查詢自身的語法/語意問題。這類訊息對呼叫端有用(據以修正查詢),
+# 且不超出 get_dataset 已公開的欄位資訊,故原樣轉述。
+_USER_QUERY_ERRORS = (
+    "syntax error",
+    "no such column",
+    "no such function",
+    "no such table",
+    "no such collation sequence",
+    "ambiguous column name",
+    "misuse of aggregate",
+    "wrong number of arguments",
+    "too many columns",
+    "too many terms",
+    "parser stack overflow",
+    "expression tree is too large",
+    "pattern too complex",
+    "string or blob too big",
+    "datatype mismatch",
+)
+
+
 def _make_authorizer(allowed_table: str):
     def authorize(action: int, arg1, arg2, db_name, trigger) -> int:
         if action == sqlite3.SQLITE_SELECT:
@@ -44,7 +76,13 @@ def execute_readonly(
     db_path: str, allowed_table: str, sql: str, effective_limit: int
 ) -> QueryResult:
     """執行 build_select 組出的 SQL(LIMIT=effective_limit+1)並偵測截斷。"""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.DatabaseError as exc:
+        # 連線失敗的原始訊息會帶出 DB 路徑;`from exc` 保留完整原因供日誌。
+        raise QueryExecutionError(
+            "查詢無法執行:資料庫暫時不可用,請稍後再試"
+        ) from exc
     try:
         conn.set_authorizer(_make_authorizer(allowed_table))
         invocations = 0
@@ -65,7 +103,14 @@ def execute_readonly(
                 raise QueryDeniedError(f"查詢觸及白名單外的資源: {exc}") from exc
             if "interrupted" in msg:
                 raise QueryDeniedError("查詢超出步數上限,已中斷") from exc
-            raise
+            if any(hint in msg for hint in _USER_QUERY_ERRORS):
+                raise QueryExecutionError(f"查詢無法執行: {exc}") from exc
+            # 其餘屬執行環境問題(DB 檔案打不開、鎖定、I/O 錯誤、檔案損毀)。
+            # 原始訊息可能帶出路徑或內部狀態,故不轉述;`from exc` 保留完整
+            # 原因供 server 日誌與 traceback 追查。
+            raise QueryExecutionError(
+                "查詢無法執行:資料庫暫時不可用,請稍後再試"
+            ) from exc
 
         columns = tuple(d[0] for d in (cur.description or ()))
         truncated = len(rows) > effective_limit

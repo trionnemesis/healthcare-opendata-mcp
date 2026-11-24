@@ -17,7 +17,10 @@ from health_opendata_mcp.contracts import (
     QueryResult,
 )
 from health_opendata_mcp.domain.query_guard import DEFAULT_LIMIT, QueryValidationError
-from health_opendata_mcp.repository.query_executor import QueryDeniedError
+from health_opendata_mcp.repository.query_executor import (
+    QueryDeniedError,
+    QueryExecutionError,
+)
 from health_opendata_mcp.repository.sqlite_repo import SqliteRepository
 
 
@@ -124,6 +127,7 @@ class QueryService:
         order_by: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> dict[str, Any]:
+        self._check_len(dataset_id, name="dataset_id", max_len=self._MAX_IDENT_LEN)
         try:
             result = await self._repo.query_rows(
                 dataset_id,
@@ -137,7 +141,7 @@ class QueryService:
             raise ValueError(
                 f"dataset 不存在: {dataset_id}(可用 list_datasets 查詢)"
             ) from exc
-        except (QueryValidationError, QueryDeniedError) as exc:
+        except (QueryValidationError, QueryDeniedError, QueryExecutionError) as exc:
             raise ValueError(str(exc)) from exc
         return _result_dict(result)
 
@@ -177,7 +181,7 @@ class QueryService:
             )
         except DatasetNotFoundError as exc:
             raise ValueError(f"dataset 不存在: {dataset_id}") from exc
-        except (QueryValidationError, QueryDeniedError) as exc:
+        except (QueryValidationError, QueryDeniedError, QueryExecutionError) as exc:
             raise ValueError(str(exc)) from exc
 
         col = {name: i for i, name in enumerate(result.columns)}
