@@ -17,6 +17,14 @@ dependencies = [
     "httpx>=0.27",
     "aiosqlite>=0.20",
     "defusedxml>=0.7",
+    # fastmcp 的遞移依賴,在此明確設下限。opentelemetry-api < 1.45.2 的
+    # TraceContextTextMapPropagator.extract() 對 traceparent 有二次時間
+    # 回溯(CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg,ReDoS)。此路徑由
+    # MCP 請求的 _meta.traceparent 直達(fastmcp/server/telemetry.py 的
+    # _get_parent_trace_context),屬用戶端可控輸入,且 regex 為同步呼叫
+    # 會阻塞事件迴圈。1.45.2 以 512 字元上限修正。本專案無 lockfile,
+    # 目前解析結果已 >= 1.45.2,此下限用於防止新環境裝回有漏洞版本。
+    "opentelemetry-api>=1.45.2",
 ]
 
 [project.optional-dependencies]

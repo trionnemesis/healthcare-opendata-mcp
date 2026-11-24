@@ -560,3 +560,63 @@ class TestCiSupplyChain:
                 f"{name}: run: 區塊直接內插 ${{{{ }}}},應改以 env: 傳入並加引號"
             )
 
+
+
+class TestTraceparentReDoSFloor:
+    """opentelemetry-api < 1.45.2 的 traceparent 解析可被用戶端輸入拖成 ReDoS。
+
+    CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg。可達性(非推論):fastmcp 的
+    `_get_parent_trace_context()` 讀 `request_ctx.get().meta` 後交給
+    `propagate.extract()` —— 即 MCP 請求的 `_meta.traceparent`,完全由
+    用戶端提供;regex 是同步呼叫,會卡住事件迴圈。1.45.2 以 512 字元
+    上限修正。本專案無 lockfile,下限用於防止新環境裝回有漏洞版本。
+    """
+
+    _FLOOR = "1.45.2"
+
+    def test_pyproject_floor_excludes_vulnerable_opentelemetry(self) -> None:
+        import re
+        from pathlib import Path
+
+        from packaging.requirements import Requirement
+        from packaging.version import Version
+
+        text = (
+            Path(__file__).resolve().parents[1] / "pyproject.toml"
+        ).read_text(encoding="utf-8")
+        m = re.search(r'"(opentelemetry-api[^"]*)"', text)
+        assert m, "opentelemetry-api floor not declared in pyproject.toml"
+        req = Requirement(m.group(1))
+        assert not req.specifier.contains(Version("1.45.1")), (
+            "opentelemetry-api floor permits versions vulnerable to "
+            "CVE-2026-126360 (traceparent ReDoS, fixed in 1.45.2)"
+        )
+        assert req.specifier.contains(Version(self._FLOOR))
+
+    def test_installed_opentelemetry_meets_floor(self) -> None:
+        from importlib.metadata import version
+
+        from packaging.version import Version
+
+        assert Version(version("opentelemetry-api")) >= Version(self._FLOOR)
+
+    def test_oversized_traceparent_extracts_without_quadratic_blowup(self) -> None:
+        """200 KB 的惡意 traceparent 必須在 1 秒內處理完。
+
+        門檻刻意寬鬆(非精密計時):1.45.1 下同一輸入需約兩分鐘 CPU,
+        1.45.2 下為毫秒級,差距約兩個數量級。
+        """
+        import time
+
+        from opentelemetry.trace.propagation.tracecontext import (
+            TraceContextTextMapPropagator,
+        )
+
+        payload = "00-" + "0" * 32 + "-" + "0" * 16 + "-00-" + " " * 200_000 + "\nx"
+        start = time.perf_counter()
+        TraceContextTextMapPropagator().extract({"traceparent": payload})
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0, (
+            f"traceparent extraction took {elapsed:.1f}s — quadratic backtracking "
+            "(CVE-2026-126360) appears to be present"
+        )
