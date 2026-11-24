@@ -507,3 +507,56 @@ class TestQueryRowsFragmentLimits:
             limit=400,
         )
         assert "LIMIT 401" in sql
+
+
+# ── 7. CI / 供應鏈(CWE-1357 / CWE-78)──────────────────────────────────────
+
+
+class TestCiSupplyChain:
+    """第三方 action 一律釘 commit SHA。
+
+    浮動 tag(@v5)可被上游重新指向 —— 等同把 CI 執行權交給上游 tag 的
+    可變性,而這些 job 看得到 GITHUB_TOKEN(pages.yml 另有 pages: write
+    與 id-token: write)。姊妹專案 g0vmcp / opendataCampus-MCP 已採此作法
+    並在註解中載明理由,本專案先前仍用浮動 tag,此測試鎖住對齊結果。
+    """
+
+    _WORKFLOWS = ("ci.yml", "pages.yml", "verify-catalog.yml")
+
+    @staticmethod
+    def _text(name: str) -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1] / ".github/workflows" / name
+        ).read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("name", _WORKFLOWS)
+    def test_actions_are_pinned_to_commit_sha(self, name: str) -> None:
+        import re
+
+        uses = re.findall(r"uses:\s*(\S+)", self._text(name))
+        assert uses, f"{name} 沒有任何 uses: —— 測試可能找錯檔案"
+        for ref in uses:
+            assert "@" in ref, f"{name}: {ref} 未指定版本"
+            rev = ref.split("@", 1)[1]
+            assert re.fullmatch(r"[0-9a-f]{40}", rev), (
+                f"{name}: {ref} 使用浮動 ref,必須釘 40 碼 commit SHA"
+            )
+
+    @pytest.mark.parametrize("name", _WORKFLOWS)
+    def test_declares_least_privilege_token(self, name: str) -> None:
+        """未宣告 permissions 時 GITHUB_TOKEN 會沿用 repository 預設。"""
+        assert "permissions:" in self._text(name)
+        assert "contents: read" in self._text(name)
+
+    @pytest.mark.parametrize("name", _WORKFLOWS)
+    def test_no_inputs_interpolated_into_run_blocks(self, name: str) -> None:
+        """${{ }} 在 shell 執行前做文字替換;插進 run: 等於讓輸入變成 shell 語法。"""
+        import re
+
+        for block in re.findall(r"\n\s+run: \|[\s\S]*?(?=\n\s+- |\n\S|\Z)", self._text(name)):
+            assert "${{" not in block, (
+                f"{name}: run: 區塊直接內插 ${{{{ }}}},應改以 env: 傳入並加引號"
+            )
+
