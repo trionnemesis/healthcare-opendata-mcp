@@ -361,3 +361,149 @@ class TestAllHttpPathsAreBounded:
             / "src/health_opendata_mcp/adapters/pcc_detail.py"
         ).read_text(encoding="utf-8")
         assert "bounded_send" in src
+
+
+# ── 6. query_rows 的例外映射與片段上限(CWE-755 / CWE-209 / CWE-20)──────────
+
+
+class TestQueryRowsErrorMapping:
+    """`conn.execute()` 失敗時 sqlite3 拋 OperationalError —— 它原本不在
+    QueryService 的例外映射清單內,會原樣穿透 MCP 工具邊界,與 service
+    文件宣告的「領域/執行層例外統一轉 ValueError」相矛盾(CWE-755),
+    並把引擎內部錯誤字串交給呼叫端(CWE-209)。
+    """
+
+    @pytest.fixture
+    async def service(self, tmp_path) -> QueryService:
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        await repo.upsert_batch(_batch([{"_nk": "k1", "title": "甲"}]))
+        return QueryService(repo)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"where": "nosuchcol = 1"},
+            {"where": "1 ==== 1"},
+            {"where": "title LIKE '" + "a" * 1_500 + "'"},
+            {"order_by": "nosuchcol"},
+            {"columns": ["nosuchcol"]},
+            {"group_by": ["nosuchcol"]},
+        ],
+    )
+    async def test_sqlite_errors_surface_as_value_error(
+        self, service: QueryService, kwargs: dict
+    ) -> None:
+        import sqlite3
+
+        try:
+            await service.query_rows("ds-a", **kwargs)
+        except ValueError:
+            pass
+        except sqlite3.Error as exc:  # pragma: no cover - 迴歸時才會走到
+            pytest.fail(f"raw sqlite3 error escaped the tool boundary: {exc!r}")
+
+    def test_operational_detail_is_not_echoed(self, tmp_path) -> None:
+        """執行層的環境問題(DB 檔案打不開)不得把路徑或引擎狀態轉述出去。
+
+        直接測 execute_readonly:`query_rows` 會先經 `get_dataset`,那條
+        aiosqlite 連線路徑不在本次修正範圍內(見報告「尚未自動修正」)。
+        """
+        from health_opendata_mcp.repository.query_executor import (
+            QueryExecutionError,
+            execute_readonly,
+        )
+
+        missing = str(tmp_path / "nonexistent" / "gone.db")
+        with pytest.raises(QueryExecutionError) as err:
+            execute_readonly(missing, "ds_a", 'SELECT * FROM "ds_a" LIMIT 1', 1)
+        assert "unable to open" not in str(err.value)
+        assert "nonexistent" not in str(err.value)
+        assert str(tmp_path) not in str(err.value)
+
+    async def test_valid_query_still_works(self, service: QueryService) -> None:
+        """修正不得改變正常查詢的結果(避免功能退化)。"""
+        out = await service.query_rows(
+            "ds-a", columns=["title"], where="title = '甲'", order_by="title"
+        )
+        assert out == {"columns": ["title"], "rows": [["甲"]], "truncated": False}
+
+
+class TestQueryRowsFragmentLimits:
+    """where / columns / group_by / order_by 是自由文字且直接進 SQL 組裝。
+
+    其餘工具參數(keyword、dataset_id、natural_key、job_number)早有 200
+    字元上限,唯獨這幾個沒有 —— 呼叫端單次即可送進 MB 級片段或上千個
+    column(CWE-20 / CWE-400),先前只由 SQLite 引擎內部限制兜底。
+    """
+
+    @pytest.fixture
+    async def service(self, tmp_path) -> QueryService:
+        repo = SqliteRepository(str(tmp_path / "t.db"))
+        await repo.init()
+        await repo.upsert_batch(_batch([{"_nk": "k1", "title": "甲"}]))
+        return QueryService(repo)
+
+    async def test_oversized_where_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="too long"):
+            await service.query_rows("ds-a", where="title = '" + "a" * 3_000 + "'")
+
+    async def test_oversized_order_by_rejected(self, service: QueryService) -> None:
+        with pytest.raises(ValueError, match="too long"):
+            await service.query_rows("ds-a", order_by="a" * 3_000)
+
+    @pytest.mark.parametrize("field", ["columns", "group_by"])
+    async def test_too_many_items_rejected(
+        self, service: QueryService, field: str
+    ) -> None:
+        with pytest.raises(ValueError, match="too many items"):
+            await service.query_rows("ds-a", **{field: ["title"] * 500})
+
+    @pytest.mark.parametrize("field", ["columns", "group_by"])
+    async def test_oversized_item_rejected(
+        self, service: QueryService, field: str
+    ) -> None:
+        with pytest.raises(ValueError, match="too long"):
+            await service.query_rows("ds-a", **{field: ["a" * 3_000]})
+
+    async def test_oversized_dataset_id_rejected(
+        self, service: QueryService
+    ) -> None:
+        with pytest.raises(ValueError, match="too long"):
+            await service.query_rows("d" * 500)
+
+    async def test_realistic_query_is_not_blocked(
+        self, service: QueryService
+    ) -> None:
+        """repo 內最長的真實 where 為 65 字元、最多 2 個 column ——
+        上限必須留足餘裕,不得誤擋既有看板查詢。"""
+        from health_opendata_mcp.domain.query_guard import (
+            MAX_FRAGMENT_ITEMS,
+            MAX_FRAGMENT_LEN,
+        )
+
+        assert MAX_FRAGMENT_LEN >= 1_000
+        assert MAX_FRAGMENT_ITEMS >= 16
+        out = await service.query_rows(
+            "ds-a",
+            columns=["title", "COUNT(*) AS n"],
+            where="title IS NOT NULL AND title != ''",
+            group_by=["title"],
+            order_by="n DESC",
+        )
+        assert out["rows"] == [["甲", 1]]
+
+    async def test_get_vendor_stats_fixed_where_still_passes(self, tmp_path) -> None:
+        """內部固定 where(get_vendor_stats)不得被新上限擋下。"""
+        from health_opendata_mcp.domain.query_guard import build_select
+
+        sql, _ = build_select(
+            "ds_pcc_tender",
+            columns=["companies", "award_price"],
+            where=(
+                "announcement_type='決標公告'"
+                " AND companies IS NOT NULL AND companies != ''"
+            ),
+            limit=400,
+        )
+        assert "LIMIT 401" in sql

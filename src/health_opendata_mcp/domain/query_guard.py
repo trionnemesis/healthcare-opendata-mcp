@@ -23,8 +23,19 @@ def normalize_limit(limit: int, *, max_limit: int = MAX_LIMIT) -> int:
 
 
 class QueryValidationError(ValueError):
-    """使用者查詢參數含禁用語法。"""
+    """使用者查詢參數含禁用語法,或超出長度/項數上限。"""
 
+
+# SQL 片段的長度與項數上限。query_rows 的 where / columns / group_by /
+# order_by 是自由文字,直接進 SQL 組裝;其餘工具參數(keyword、dataset_id、
+# natural_key、job_number)早有 200 字元上限,唯獨這幾個沒有,呼叫端單次
+# 即可送進 MB 級片段或上千個 column(CWE-20 / CWE-400)。目前上限僅由
+# SQLite 引擎內部限制兜底,且是以原始 OperationalError 的形式回報。
+# 上限遠大於任何真實查詢(本 repo 內最長 where 為 65 字元、最多 2 個
+# column),不影響正常使用。此處而非 service 層把關,因為它是
+# query_rows / get_vendor_stats / sample_rows 共用的唯一組裝點。
+MAX_FRAGMENT_LEN = 2_000
+MAX_FRAGMENT_ITEMS = 64
 
 _FORBIDDEN = re.compile(
     r";|--|/\*"
@@ -35,10 +46,22 @@ _FORBIDDEN = re.compile(
 
 
 def _validate(fragment: str, *, what: str) -> str:
+    if len(fragment) > MAX_FRAGMENT_LEN:
+        raise QueryValidationError(
+            f"{what} too long ({len(fragment)} chars, max {MAX_FRAGMENT_LEN})"
+        )
     m = _FORBIDDEN.search(fragment)
     if m:
         raise QueryValidationError(f"{what} 含禁用語法: {m.group(0)!r}")
     return fragment
+
+
+def _validate_items(items: list[str], *, what: str) -> list[str]:
+    if len(items) > MAX_FRAGMENT_ITEMS:
+        raise QueryValidationError(
+            f"{what} has too many items ({len(items)}, max {MAX_FRAGMENT_ITEMS})"
+        )
+    return [_validate(i, what=what) for i in items]
 
 
 def build_select(
@@ -55,13 +78,15 @@ def build_select(
     table 必須由呼叫端以 dataset_id 白名單映射取得 — 本函式不接使用者原始輸入。
     SQL 的 LIMIT 為 effective_limit + 1,供 executor 偵測截斷。
     """
-    cols = ", ".join(_validate(c, what="columns") for c in columns) if columns else "*"
+    cols = (
+        ", ".join(_validate_items(columns, what="columns")) if columns else "*"
+    )
     # table 來自 dataset_id 白名單、cols 已過 _validate,非使用者原始輸入
     parts = [f'SELECT {cols} FROM "{table}"']  # nosec B608
     if where:
         parts.append(f"WHERE {_validate(where, what='where')}")
     if group_by:
-        joined = ", ".join(_validate(g, what="group_by") for g in group_by)
+        joined = ", ".join(_validate_items(group_by, what="group_by"))
         parts.append(f"GROUP BY {joined}")
     if order_by:
         parts.append(f"ORDER BY {_validate(order_by, what='order_by')}")
